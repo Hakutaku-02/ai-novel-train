@@ -37,7 +37,7 @@ npm install
 ```bash
 # 复制环境变量模板
 cp .env.example .env
-# 编辑 .env 文件，配置你的 AI API 密钥等信息
+# 编辑 .env 文件，配置数据库存放路径等
 ```
 
 6. **初始化数据库**

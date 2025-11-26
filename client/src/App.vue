@@ -41,7 +41,7 @@ const activeMenu = computed(() => {
     <!-- 侧边栏 -->
     <el-aside :width="isCollapse ? '64px' : '200px'" class="app-aside">
       <div class="logo">
-        <span v-if="!isCollapse">📚 小说训练</span>
+        <span v-if="!isCollapse">📚 小说写作训练</span>
         <span v-else>📚</span>
       </div>
       
