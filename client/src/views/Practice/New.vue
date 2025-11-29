@@ -224,8 +224,7 @@ function regenerate() {
           </div>
         </div>
       </template>
-      
-      <div class="question-content">
+        <div class="question-content">
         <!-- 基本信息 -->
         <div class="info-row">
           <el-tag>{{ typeName }}</el-tag>
@@ -235,7 +234,102 @@ function regenerate() {
           </el-tag>
         </div>
         
-        <!-- 背景 -->
+        <!-- 章节创作专用：题目描述 -->
+        <div v-if="question.content?.description" class="section">
+          <h4>📝 题目描述</h4>
+          <p>{{ question.content.description }}</p>
+        </div>
+        
+        <!-- 章节创作专用：章节标题和概要 -->
+        <div v-if="question.content?.chapterTitle" class="section">
+          <h4>📖 章节标题</h4>
+          <p class="chapter-title">{{ question.content.chapterTitle }}</p>
+          <p v-if="question.content?.synopsis" class="synopsis">{{ question.content.synopsis }}</p>
+        </div>
+        
+        <!-- 章节创作专用：开篇钩子 -->
+        <div v-if="question.content?.openingHook" class="section">
+          <h4>🎣 开篇钩子</h4>
+          <p>{{ question.content.openingHook }}</p>
+        </div>
+        
+        <!-- 章节创作专用：场景列表 -->
+        <div v-if="question.content?.scenes?.length" class="section">
+          <h4>🎬 场景细纲</h4>
+          <div class="scenes-list">
+            <div
+              v-for="(scene, index) in question.content.scenes"
+              :key="index"
+              class="scene-card"
+            >
+              <div class="scene-header">
+                <span class="scene-number">场景 {{ scene.sceneNumber || index + 1 }}</span>
+                <span class="scene-name">{{ scene.sceneName }}</span>
+                <el-tag size="small" v-if="scene.wordCountSuggestion">约{{ scene.wordCountSuggestion }}字</el-tag>
+              </div>
+              <div class="scene-meta">
+                <span v-if="scene.location">📍 {{ scene.location }}</span>
+                <span v-if="scene.time">🕐 {{ scene.time }}</span>
+              </div>
+              <div v-if="scene.characters?.length" class="scene-characters">
+                👥 出场角色: {{ scene.characters.join('、') }}
+              </div>
+              <div class="scene-content">{{ scene.content }}</div>
+              <div v-if="scene.purpose" class="scene-purpose">
+                <strong>叙事目的:</strong> {{ scene.purpose }}
+              </div>
+              <div v-if="scene.emotionalArc" class="scene-emotion">
+                <strong>情绪变化:</strong> {{ scene.emotionalArc }}
+              </div>
+              <div v-if="scene.keyActions?.length" class="scene-actions">
+                <strong>关键动作:</strong>
+                <ul>
+                  <li v-for="(action, i) in scene.keyActions" :key="i">{{ action }}</li>
+                </ul>
+              </div>
+              <div v-if="scene.dialogueNotes" class="scene-dialogue">
+                <strong>对话要点:</strong> {{ scene.dialogueNotes }}
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 章节创作专用：剧情点 -->
+        <div v-if="question.content?.plotPoints?.length" class="section">
+          <h4>📌 剧情要点</h4>
+          <div class="plot-points">
+            <div v-for="(point, i) in question.content.plotPoints" :key="i" class="plot-point">
+              <el-tag :type="point.importance === '主线' ? 'danger' : point.importance === '支线' ? 'warning' : 'info'" size="small">
+                {{ point.importance }}
+              </el-tag>
+              <span>{{ point.point }}</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 章节创作专用：伏笔 -->
+        <div v-if="question.content?.foreshadowing?.length" class="section">
+          <h4>🔮 可埋伏笔</h4>
+          <ul>
+            <li v-for="(f, i) in question.content.foreshadowing" :key="i">{{ f }}</li>
+          </ul>
+        </div>
+        
+        <!-- 章节创作专用：结尾悬念 -->
+        <div v-if="question.content?.chapterEndHook" class="section">
+          <h4>🎭 章节结尾悬念</h4>
+          <p>{{ question.content.chapterEndHook }}</p>
+        </div>
+        
+        <!-- 章节创作专用：写作注意事项 -->
+        <div v-if="question.content?.writingNotes?.length" class="section">
+          <h4>📋 写作注意事项</h4>
+          <ul>
+            <li v-for="(n, i) in question.content.writingNotes" :key="i">{{ n }}</li>
+          </ul>
+        </div>
+        
+        <!-- 背景（通用） -->
         <div v-if="question.content?.background" class="section">
           <h4>📖 场景背景</h4>
           <p>{{ question.content.background }}</p>
@@ -432,6 +526,112 @@ function regenerate() {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* 章节创作样式 */
+.chapter-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: #303133;
+  margin-bottom: 8px;
+}
+
+.synopsis {
+  color: #606266;
+  font-style: italic;
+  background: #f5f7fa;
+  padding: 12px;
+  border-radius: 6px;
+  margin-top: 8px;
+}
+
+.scenes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.scene-card {
+  background: #fafafa;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.scene-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.scene-number {
+  background: #409eff;
+  color: white;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.scene-name {
+  font-weight: bold;
+  color: #303133;
+  font-size: 16px;
+}
+
+.scene-meta {
+  display: flex;
+  gap: 16px;
+  color: #909399;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.scene-characters {
+  color: #606266;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.scene-content {
+  color: #303133;
+  line-height: 1.8;
+  padding: 12px;
+  background: white;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+
+.scene-purpose,
+.scene-emotion,
+.scene-dialogue {
+  color: #606266;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.scene-actions {
+  color: #606266;
+  font-size: 14px;
+}
+
+.scene-actions ul {
+  margin: 4px 0 0 20px;
+  padding: 0;
+}
+
+.plot-points {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plot-point {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .loading-card {

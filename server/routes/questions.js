@@ -263,20 +263,53 @@ router.post('/generate', async (req, res) => {
     let promptContent = template.content;
     promptContent = promptContent.replace(/{{difficulty}}/g, difficulty);
     
-    // 处理关键词和用户想法
+    // 处理关键词和用户想法 - 使用条件块语法 {{#var}}...{{/var}}
     if (extraParams.keywords) {
+      promptContent = promptContent.replace(/{{#keywords}}[\s\S]*?{{\/keywords}}/g, (match) => {
+        return match.replace(/{{#keywords}}/g, '').replace(/{{\/keywords}}/g, '').replace(/{{keywords}}/g, extraParams.keywords);
+      });
       promptContent = promptContent.replace(/{{keywords}}/g, extraParams.keywords);
-    }
-    if (extraParams.userIdea) {
-      promptContent = promptContent.replace(/{{userIdea}}/g, extraParams.userIdea);
+    } else {
+      // 移除整个条件块
+      promptContent = promptContent.replace(/{{#keywords}}[\s\S]*?{{\/keywords}}/g, '');
+      promptContent = promptContent.replace(/{{keywords}}/g, '');
     }
     
-    // 替换其他额外参数
+    if (extraParams.userIdea) {
+      promptContent = promptContent.replace(/{{#userIdea}}[\s\S]*?{{\/userIdea}}/g, (match) => {
+        return match.replace(/{{#userIdea}}/g, '').replace(/{{\/userIdea}}/g, '').replace(/{{userIdea}}/g, extraParams.userIdea);
+      });
+      promptContent = promptContent.replace(/{{userIdea}}/g, extraParams.userIdea);
+    } else {
+      promptContent = promptContent.replace(/{{#userIdea}}[\s\S]*?{{\/userIdea}}/g, '');
+      promptContent = promptContent.replace(/{{userIdea}}/g, '');
+    }
+    
+    // 章节创作类型的默认值
+    const chapterDefaults = {
+      genre: '玄幻',
+      protagonist: '一个年轻的修炼者，性格坚韧，有着不屈的意志',
+      currentPlot: '主角刚刚突破瓶颈，实力大增，准备面对新的挑战',
+      chapterGoal: '推进剧情发展，展现主角成长',
+      targetWordCount: '3000'
+    };
+    
+    // 替换其他额外参数，对于章节类型提供默认值
     Object.entries(extraParams).forEach(([key, value]) => {
-      if (!['keywords', 'userIdea'].includes(key)) {
+      if (!['keywords', 'userIdea'].includes(key) && value) {
         promptContent = promptContent.replace(new RegExp(`{{${key}}}`, 'g'), value);
       }
     });
+    
+    // 如果是章节类型，用默认值替换未被替换的变量
+    if (type === 'chapter') {
+      Object.entries(chapterDefaults).forEach(([key, defaultValue]) => {
+        promptContent = promptContent.replace(new RegExp(`{{${key}}}`, 'g'), extraParams[key] || defaultValue);
+      });
+    }
+    
+    // 清理剩余的未替换变量（通用处理）
+    promptContent = promptContent.replace(/{{[^}]+}}/g, '');
     
     // 调用 AI 生成题目（功能锚点：question_generate）
     const response = await callAIForFeature(AI_FEATURES.QUESTION_GENERATE, [
