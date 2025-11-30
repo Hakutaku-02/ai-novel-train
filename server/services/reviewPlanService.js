@@ -114,7 +114,7 @@ function createReviewPlansForMistakes(items, sessionId) {
  * @param {Object} options - 查询选项
  * @param {number} options.limit - 返回数量限制
  * @param {boolean} options.includeFuture - 是否包含未来的任务
- * @param {number} options.wordId - 指定词汇ID（可选）
+ * @param {number} options.wordId - 指定词汇ID（可选，指定时不检查时间限制）
  * @returns {Array<Object>} 复习任务列表
  */
 function getDueReviewTasks(options = {}) {
@@ -133,14 +133,14 @@ function getDueReviewTasks(options = {}) {
   
   const params = [];
   
-  // 如果指定了词汇ID，只查询该词汇
+  // 如果指定了词汇ID，只查询该词汇（不检查时间限制，因为前端已确认到期）
   if (wordId) {
     sql += ` AND rp.word_id = ?`;
     params.push(wordId);
-  }
-  
-  if (!includeFuture) {
-    sql += ` AND rp.next_review_at <= datetime('now')`;
+  } else if (!includeFuture) {
+    // 只有在未指定wordId时才检查时间限制
+    // 使用 localtime 修饰符确保与本地时间一致
+    sql += ` AND datetime(rp.next_review_at) <= datetime('now')`;
   }
   
   sql += ` ORDER BY rp.next_review_at ASC LIMIT ?`;
