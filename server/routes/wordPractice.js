@@ -1285,8 +1285,11 @@ router.post('/mistakes/create-review-plans', (req, res) => {
  */
 router.get('/reviews/due', (req, res) => {
   try {
-    const { limit = 20 } = req.query;
-    const tasks = reviewPlanService.getDueReviewTasks({ limit: parseInt(limit) });
+    const { limit = 20, wordId } = req.query;
+    const tasks = reviewPlanService.getDueReviewTasks({ 
+      limit: parseInt(limit),
+      wordId: wordId ? parseInt(wordId) : null
+    });
     res.json({ success: true, data: tasks });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

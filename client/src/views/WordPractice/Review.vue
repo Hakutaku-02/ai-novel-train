@@ -4,12 +4,13 @@
  * 用于复习待复习的词汇
  */
 import { ref, onMounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Check, Close } from '@element-plus/icons-vue'
 import { getDueReviews, completeReview, skipReview } from '../../api/wordPractice'
 
 const router = useRouter()
+const route = useRoute()
 
 // 状态
 const loading = ref(false)
@@ -45,7 +46,14 @@ const progress = computed(() => {
 async function loadReviews() {
   loading.value = true
   try {
-    const res = await getDueReviews({ limit: 50 })
+    // 检查是否有指定的词汇ID
+    const wordId = route.query.wordId
+    const params = { limit: 50 }
+    if (wordId) {
+      params.wordId = wordId
+    }
+    
+    const res = await getDueReviews(params)
     reviews.value = res.data || []
     
     if (reviews.value.length === 0) {

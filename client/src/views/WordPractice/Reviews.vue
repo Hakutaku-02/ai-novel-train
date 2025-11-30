@@ -89,6 +89,15 @@ function startReview() {
   router.push('/word-practice/review')
 }
 
+// 开始单个词汇复习
+function startSingleReview(plan) {
+  // 跳转到复习页面，传递单个词汇ID
+  router.push({
+    path: '/word-practice/review',
+    query: { wordId: plan.word_id }
+  })
+}
+
 // 跳过复习
 async function handleSkip(plan) {
   try {
@@ -284,17 +293,26 @@ onMounted(() => {
         </el-table-column>
         <el-table-column prop="review_count" label="已复习" width="80" />
         <el-table-column prop="correct_streak" label="连续正确" width="100" />
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button 
-              v-if="!row.is_completed && new Date(row.next_review_at) <= new Date()"
-              size="small" 
-              text
-              type="warning"
-              @click="handleSkip(row)"
-            >
-              推迟
-            </el-button>
+            <template v-if="!row.is_completed && new Date(row.next_review_at) <= new Date()">
+              <el-button 
+                size="small" 
+                text
+                type="primary"
+                @click="startSingleReview(row)"
+              >
+                复习
+              </el-button>
+              <el-button 
+                size="small" 
+                text
+                type="warning"
+                @click="handleSkip(row)"
+              >
+                推迟
+              </el-button>
+            </template>
             <span v-else-if="row.is_completed" class="completed-text">✓</span>
           </template>
         </el-table-column>

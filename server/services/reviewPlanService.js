@@ -114,11 +114,12 @@ function createReviewPlansForMistakes(items, sessionId) {
  * @param {Object} options - 查询选项
  * @param {number} options.limit - 返回数量限制
  * @param {boolean} options.includeFuture - 是否包含未来的任务
+ * @param {number} options.wordId - 指定词汇ID（可选）
  * @returns {Array<Object>} 复习任务列表
  */
 function getDueReviewTasks(options = {}) {
   const db = getDatabase();
-  const { limit = 20, includeFuture = false } = options;
+  const { limit = 20, includeFuture = false, wordId = null } = options;
   
   let sql = `
     SELECT 
@@ -130,13 +131,22 @@ function getDueReviewTasks(options = {}) {
     WHERE rp.is_completed = 0
   `;
   
+  const params = [];
+  
+  // 如果指定了词汇ID，只查询该词汇
+  if (wordId) {
+    sql += ` AND rp.word_id = ?`;
+    params.push(wordId);
+  }
+  
   if (!includeFuture) {
     sql += ` AND rp.next_review_at <= datetime('now')`;
   }
   
   sql += ` ORDER BY rp.next_review_at ASC LIMIT ?`;
+  params.push(limit);
   
-  return db.prepare(sql).all(limit);
+  return db.prepare(sql).all(...params);
 }
 
 /**
