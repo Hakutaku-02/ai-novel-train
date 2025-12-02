@@ -154,6 +154,14 @@ export function evaluatePractice(practiceId) {
   return request.post(`/skills/practices/${practiceId}/evaluate`)
 }
 
+/**
+ * 删除练习记录
+ * @param {number} practiceId - 练习ID
+ */
+export function deletePractice(practiceId) {
+  return request.delete(`/skills/practices/${practiceId}`)
+}
+
 // ==================== 统计相关 ====================
 
 /**

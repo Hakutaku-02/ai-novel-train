@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, RefreshRight, Download, Upload, Setting, ArrowDown, InfoFilled } from '@element-plus/icons-vue'
+import { Plus, Search, RefreshRight, Download, Upload, Setting, InfoFilled } from '@element-plus/icons-vue'
 import { 
   getSkills, getCategories, generateSkill, createSkill, deleteSkill,
   getPresetStatus, initPresetSkills, getPresetList, exportSkills, importSkills
@@ -318,21 +318,6 @@ const removeMistake = (index) => {
   manualForm.value.common_mistakes.splice(index, 1)
 }
 
-// 头部下拉菜单命令处理
-const handleHeaderCommand = (command) => {
-  switch (command) {
-    case 'preset':
-      openPresetDialog()
-      break
-    case 'export':
-      openImportExportDialog('export')
-      break
-    case 'import':
-      openImportExportDialog('import')
-      break
-  }
-}
-
 // ==================== 预设技巧相关 ====================
 
 // 打开预设对话框
@@ -531,24 +516,15 @@ onMounted(() => {
         <p class="subtitle">学习各种小说写作技巧，通过练习提升写作能力</p>
       </div>
       <div class="header-actions">
-        <el-dropdown trigger="click" @command="handleHeaderCommand">
-          <el-button :icon="Setting">
-            更多 <el-icon class="el-icon--right"><arrow-down /></el-icon>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="preset" :icon="Setting">
-                预设技巧管理
-              </el-dropdown-item>
-              <el-dropdown-item command="export" :icon="Download">
-                导出知识点
-              </el-dropdown-item>
-              <el-dropdown-item command="import" :icon="Upload">
-                导入知识点
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <el-button :icon="Download" @click="openImportExportDialog('export')">
+          导出
+        </el-button>
+        <el-button :icon="Upload" @click="openImportExportDialog('import')">
+          导入
+        </el-button>
+        <el-button :icon="Setting" @click="openPresetDialog">
+          预设管理
+        </el-button>
         <el-button type="primary" :icon="Plus" @click="openAddDialog">
           添加知识点
         </el-button>

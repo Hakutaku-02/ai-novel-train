@@ -10,7 +10,9 @@ import {
   updatePractice, 
   submitPractice, 
   evaluatePractice,
-  getPractice
+  getPractice,
+  getQuestionBank,
+  useQuestion
 } from '../../api/skills'
 
 const router = useRouter()
@@ -37,6 +39,12 @@ const generateOptions = ref({
   saveToBank: true
 })
 const showAdvancedOptions = ref(false)
+
+// 题目选择相关
+const existingQuestions = ref([])
+const selectedQuestion = ref(null)
+const loadingQuestions = ref(false)
+const actionMode = ref('generate') // 'generate' | 'select'
 
 // 计算字数
 const wordCount = computed(() => {
@@ -73,6 +81,90 @@ const loadSkill = async () => {
   }
 }
 
+// 加载已有题目（从题库加载）
+const loadExistingQuestions = async () => {
+  if (!skill.value) return
+  
+  loadingQuestions.value = true
+  try {
+    const res = await getQuestionBank(route.params.id, { pageSize: 100 })
+    
+    // 处理不同的响应格式
+    let list = []
+    if (Array.isArray(res.data)) {
+      list = res.data
+    } else if (res.data?.list && Array.isArray(res.data.list)) {
+      list = res.data.list
+    } else if (res.data?.data && Array.isArray(res.data.data)) {
+      list = res.data.data
+    }
+    
+    existingQuestions.value = list.map(item => {
+      const content = typeof item.content === 'string' 
+        ? JSON.parse(item.content) 
+        : item.content
+      return {
+        id: item.id,
+        title: item.title,
+        keywords: item.keywords,
+        difficulty: item.difficulty,
+        useCount: item.use_count || 0,
+        ...content
+      }
+    })
+  } catch (error) {
+    console.error('加载题库失败:', error)
+    ElMessage.error('加载题库失败')
+    existingQuestions.value = [] // 确保为空数组
+  } finally {
+    loadingQuestions.value = false
+  }
+}
+
+// 选择已有题目
+const selectQuestion = async (q) => {
+  selectedQuestion.value = q
+  
+  // 使用 useQuestion API 创建新的练习记录
+  try {
+    const res = await useQuestion(q.id)
+    
+    // 确保正确获取 practiceId
+    if (res.data && res.data.id) {
+      practiceId.value = res.data.id
+      question.value = q
+      console.log('从题库选择题目，练习ID:', practiceId.value)
+      
+      // 开始计时
+      startTimer()
+      ElMessage.success('已选择题目，开始练习')
+    } else {
+      console.error('选择题目返回数据异常:', res)
+      ElMessage.error('创建练习记录失败')
+    }
+  } catch (error) {
+    ElMessage.error('创建练习失败: ' + (error.message || '未知错误'))
+    console.error('选择题目错误:', error)
+  }
+}
+
+// 获取难度对应的标签类型
+const getDifficultyType = (difficulty) => {
+  const map = {
+    '简单': 'success',
+    '中等': 'warning',
+    '困难': 'danger'
+  }
+  return map[difficulty] || 'info'
+}
+
+// 切换操作模式时的处理
+const onActionModeChange = async (mode) => {
+  if (mode === 'select' && existingQuestions.value.length === 0) {
+    await loadExistingQuestions()
+  }
+}
+
 // 生成练习题
 const generateQuestion = async () => {
   generating.value = true
@@ -91,15 +183,25 @@ const generateQuestion = async () => {
     
     // 创建练习记录
     const createRes = await createPractice(route.params.id, {
-      questionTitle: question.value.title,
+      questionTitle: question.value.title || '练习题',
       questionContent: question.value
     })
-    practiceId.value = createRes.data.id
+    
+    // 确保正确获取 practiceId
+    if (createRes.data && createRes.data.id) {
+      practiceId.value = createRes.data.id
+      console.log('练习记录创建成功，ID:', practiceId.value)
+    } else {
+      console.error('创建练习返回数据异常:', createRes)
+      ElMessage.error('创建练习记录失败')
+      return
+    }
     
     // 开始计时
     startTimer()
   } catch (error) {
     ElMessage.error('生成练习题失败: ' + (error.message || '未知错误'))
+    console.error('生成练习题错误:', error)
   } finally {
     generating.value = false
   }
@@ -166,7 +268,15 @@ const handleSave = async () => {
 
 // 提交练习
 const handleSubmit = async () => {
-  if (!practiceId.value) return
+  if (!practiceId.value) {
+    ElMessage.warning('练习记录不存在，请重新生成或选择题目')
+    return
+  }
+  
+  if (!userAnswer.value || !userAnswer.value.trim()) {
+    ElMessage.warning('请先输入答案')
+    return
+  }
   
   // 检查字数
   if (question.value?.wordCountRange) {
@@ -319,66 +429,172 @@ onUnmounted(() => {
           </div>
           
           <div class="generate-action">
-            <p class="tip">
-              AI 将根据这个技巧的核心要点，为你生成一道针对性的练习题
-            </p>
+            <div class="action-tabs">
+              <el-radio-group v-model="actionMode" size="large" @change="onActionModeChange">
+                <el-radio-button label="generate">生成新题目</el-radio-button>
+                <el-radio-button label="select">选择已有题目</el-radio-button>
+              </el-radio-group>
+            </div>
             
-            <!-- 高级选项 -->
-            <div class="advanced-toggle">
-              <el-button link type="primary" @click="showAdvancedOptions = !showAdvancedOptions">
-                {{ showAdvancedOptions ? '收起自定义选项' : '自定义生成选项' }}
-                <el-icon class="toggle-icon" :class="{ expanded: showAdvancedOptions }">
-                  <ArrowLeft />
-                </el-icon>
+            <!-- 生成新题目 -->
+            <div v-if="actionMode === 'generate'" class="generate-mode">
+              <p class="tip">
+                AI 将根据这个技巧的核心要点，为你生成一道针对性的练习题
+              </p>
+              
+              <!-- 高级选项 -->
+              <div class="advanced-toggle">
+                <el-button link type="primary" @click="showAdvancedOptions = !showAdvancedOptions">
+                  {{ showAdvancedOptions ? '收起自定义选项' : '自定义生成选项' }}
+                  <el-icon class="toggle-icon" :class="{ expanded: showAdvancedOptions }">
+                    <ArrowLeft />
+                  </el-icon>
+                </el-button>
+              </div>
+              
+              <el-collapse-transition>
+                <div v-show="showAdvancedOptions" class="advanced-options">
+                  <el-form label-position="top" size="small">
+                    <el-form-item label="关键词 / 元素（可选）">
+                      <el-input
+                        v-model="generateOptions.keywords"
+                        placeholder="如：校园、春天、分离、暗恋..."
+                        clearable
+                      />
+                      <div class="form-tip">输入你希望题目包含的关键词或元素，多个用逗号分隔</div>
+                    </el-form-item>
+                    
+                    <el-form-item label="具体要求（可选）">
+                      <el-input
+                        v-model="generateOptions.description"
+                        type="textarea"
+                        :rows="2"
+                        placeholder="描述你希望生成什么样的题目..."
+                        clearable
+                      />
+                      <div class="form-tip">更详细地描述你的需求，让题目更符合你的练习目标</div>
+                    </el-form-item>
+                    
+                    <el-form-item>
+                      <el-checkbox v-model="generateOptions.saveToBank">
+                        将生成的题目保存到题目库，方便以后继续练习
+                      </el-checkbox>
+                    </el-form-item>
+                  </el-form>
+                </div>
+              </el-collapse-transition>
+              
+              <el-button 
+                type="primary" 
+                size="large"
+                :loading="generating"
+                @click="generateQuestion"
+              >
+                {{ generating ? '正在生成练习题...' : '生成练习题' }}
               </el-button>
             </div>
             
-            <el-collapse-transition>
-              <div v-show="showAdvancedOptions" class="advanced-options">
-                <el-form label-position="top" size="small">
-                  <el-form-item label="关键词 / 元素（可选）">
-                    <el-input
-                      v-model="generateOptions.keywords"
-                      placeholder="如：校园、春天、分离、暗恋..."
-                      clearable
-                    />
-                    <div class="form-tip">输入你希望题目包含的关键词或元素，多个用逗号分隔</div>
-                  </el-form-item>
-                  
-                  <el-form-item label="具体要求（可选）">
-                    <el-input
-                      v-model="generateOptions.description"
-                      type="textarea"
-                      :rows="2"
-                      placeholder="描述你希望生成什么样的题目..."
-                      clearable
-                    />
-                    <div class="form-tip">更详细地描述你的需求，让题目更符合你的练习目标</div>
-                  </el-form-item>
-                  
-                  <el-form-item>
-                    <el-checkbox v-model="generateOptions.saveToBank">
-                      保存到题库（方便以后复用）
-                    </el-checkbox>
-                  </el-form-item>
-                </el-form>
+            <!-- 选择已有题目 -->
+            <div v-else class="select-mode">
+              <p class="tip">
+                从该技巧的题库中选择一个题目进行练习
+              </p>
+              
+              <div class="question-bank-list" v-loading="loadingQuestions">
+                <div v-if="existingQuestions.length === 0 && !loadingQuestions" class="no-questions">
+                  <el-empty description="题库暂无题目">
+                    <el-button type="primary" @click="actionMode = 'generate'">
+                      生成新题目
+                    </el-button>
+                  </el-empty>
+                </div>
+                
+                <div v-else class="questions-list">
+                  <el-card 
+                    v-for="(q, index) in existingQuestions" 
+                    :key="index"
+                    class="question-item"
+                    shadow="hover"
+                  >
+                    <div class="question-item-header">
+                      <h4>{{ q.title }}</h4>
+                      <div class="question-item-tags">
+                        <el-tag v-if="q.difficulty" size="small" :type="getDifficultyType(q.difficulty)">
+                          {{ q.difficulty }}
+                        </el-tag>
+                        <el-tag size="small" type="info">已练习 {{ q.useCount || 0 }} 次</el-tag>
+                      </div>
+                    </div>
+                    
+                    <div class="question-item-content">
+                      <p v-if="q.background" class="background">
+                        <strong>背景：</strong>{{ q.background.length > 100 ? q.background.slice(0, 100) + '...' : q.background }}
+                      </p>
+                      <p v-if="q.task" class="task">
+                        <strong>任务：</strong>{{ q.task.length > 100 ? q.task.slice(0, 100) + '...' : q.task }}
+                      </p>
+                      <p v-if="q.keywords" class="keywords">
+                        <strong>关键词：</strong>{{ q.keywords }}
+                      </p>
+                    </div>
+                    
+                    <div class="question-item-footer">
+                      <span v-if="q.wordCountRange" class="word-range">
+                        字数要求：{{ q.wordCountRange?.min }}-{{ q.wordCountRange?.max }}
+                      </span>
+                      <el-button type="primary" size="small" @click="selectQuestion(q)">
+                        选择此题
+                      </el-button>
+                    </div>
+                  </el-card>
+                </div>
               </div>
-            </el-collapse-transition>
-            
-            <el-button 
-              type="primary" 
-              size="large"
-              :loading="generating"
-              @click="generateQuestion"
-            >
-              {{ generating ? '正在生成练习题...' : '生成练习题' }}
-            </el-button>
+            </div>
           </div>
         </el-card>
       </div>
       
       <!-- 练习区域 -->
       <div v-else class="practice-area">
+        <!-- 写作区域 -->
+        <el-card class="writing-card">
+          <template #header>
+            <div class="writing-header">
+              <span>开始写作</span>
+              <div class="writing-stats">
+                <span class="timer">
+                  <el-icon><Timer /></el-icon>
+                  {{ formattedTime }}
+                </span>
+                <span class="word-count" :class="{ warning: !isWordCountValid }">
+                  <el-icon><Document /></el-icon>
+                  {{ wordCount }} 字
+                </span>
+              </div>
+            </div>
+          </template>
+          
+          <el-input
+            v-model="userAnswer"
+            type="textarea"
+            :rows="15"
+            placeholder="在这里开始你的写作..."
+            :disabled="evaluating"
+          />
+          
+          <div class="writing-actions">
+            <el-button @click="handleSave" :disabled="evaluating || !practiceId">保存草稿</el-button>
+            <el-button 
+              type="primary" 
+              @click="handleSubmit"
+              :loading="submitting || evaluating"
+              :disabled="!userAnswer || !userAnswer.trim() || practiceId === null"
+            >
+              {{ evaluating ? 'AI 评审中...' : '提交并评审' }}
+            </el-button>
+          </div>
+        </el-card>
+        
         <!-- 题目信息 -->
         <el-card class="question-card">
           <template #header>
@@ -429,47 +645,9 @@ onUnmounted(() => {
             </el-collapse>
           </div>
         </el-card>
-        
-        <!-- 写作区域 -->
-        <el-card class="writing-card">
-          <template #header>
-            <div class="writing-header">
-              <span>开始写作</span>
-              <div class="writing-stats">
-                <span class="timer">
-                  <el-icon><Timer /></el-icon>
-                  {{ formattedTime }}
-                </span>
-                <span class="word-count" :class="{ warning: !isWordCountValid }">
-                  <el-icon><Document /></el-icon>
-                  {{ wordCount }} 字
-                </span>
-              </div>
-            </div>
-          </template>
-          
-          <el-input
-            v-model="userAnswer"
-            type="textarea"
-            :rows="15"
-            placeholder="在这里开始你的写作..."
-            :disabled="evaluating"
-          />
-          
-          <div class="writing-actions">
-            <el-button @click="handleSave" :disabled="evaluating">保存草稿</el-button>
-            <el-button 
-              type="primary" 
-              @click="handleSubmit"
-              :loading="submitting || evaluating"
-              :disabled="!userAnswer.trim()"
-            >
-              {{ evaluating ? 'AI 评审中...' : '提交并评审' }}
-            </el-button>
-          </div>
-        </el-card>
       </div>
     </template>
+    
   </div>
 </template>
 
@@ -576,12 +754,158 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 
+/* 动作选项卡 */
+.action-tabs {
+  margin-bottom: 20px;
+}
+
+.generate-mode, .select-mode {
+  padding: 20px 0;
+}
+
+.existing-questions-preview {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 6px;
+}
+
+.preview-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.question-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 题目选择器 */
+.question-selector {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.questions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.question-item {
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.question-item:hover {
+  transform: translateY(-2px);
+}
+
+.question-item.selected {
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
+}
+
+.question-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.question-item-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.question-item-content {
+  margin-bottom: 8px;
+}
+
+.question-item-content p {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.question-item-meta {
+  font-size: 12px;
+  color: #909399;
+}
+
+/* 题库列表样式 */
+.question-bank-list {
+  max-height: 500px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.question-bank-list .questions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.question-bank-list .question-item {
+  cursor: default;
+}
+
+.question-bank-list .question-item:hover {
+  transform: none;
+}
+
+.question-item-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.question-item-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.question-item-content p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.question-item-content .keywords {
+  color: #909399;
+}
+
+.select-mode .tip {
+  text-align: center;
+}
+
+.no-questions {
+  padding: 40px 0;
+}
+
 /* 练习区域 */
 .practice-area {
   display: grid;
   grid-template-columns: 1fr 400px;
   gap: 20px;
   align-items: start;
+}
+
+.practice-area > :first-child {
+  grid-column: 1;
+}
+
+.practice-area > :last-child {
+  grid-column: 2;
 }
 
 /* 题目卡片 */

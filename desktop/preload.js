@@ -39,6 +39,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 获取更新状态
   getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
   
+  // 打开发布页面
+  openReleasePage: () => ipcRenderer.invoke('open-release-page'),
+  
   // 监听更新状态变化
   onUpdateStatus: (callback) => {
     ipcRenderer.on('update-status', (event, data) => callback(data));

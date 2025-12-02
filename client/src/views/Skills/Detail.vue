@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Edit, Delete } from '@element-plus/icons-vue'
-import { getSkill, recordStudy, getSkillPractices, getQuestionBank, deleteQuestion, useQuestion, createPractice } from '../../api/skills'
+import { getSkill, recordStudy, getSkillPractices, getQuestionBank, deleteQuestion, useQuestion, createPractice, deletePractice } from '../../api/skills'
 import { marked } from 'marked'
 
 const router = useRouter()
@@ -19,6 +19,12 @@ marked.setOptions({
 const loading = ref(true)
 const skill = ref(null)
 const practices = ref([])
+const practicesPagination = ref({
+  page: 1,
+  pageSize: 5,
+  total: 0,
+  totalPages: 0
+})
 const activeTab = ref('content')
 const studyStartTime = ref(null)
 
@@ -62,8 +68,7 @@ const loadSkill = async () => {
     skill.value = res.data
     
     // 加载练习记录
-    const practicesRes = await getSkillPractices(route.params.id, { pageSize: 5 })
-    practices.value = practicesRes.data
+    await loadPractices()
     
     // 加载题库
     loadQuestionBank()
@@ -188,6 +193,53 @@ const goBack = () => {
 const startPractice = () => {
   saveStudyRecord()
   router.push(`/skills/${skill.value.id}/practice`)
+}
+
+// 加载练习记录
+const loadPractices = async (page = 1) => {
+  try {
+    const res = await getSkillPractices(route.params.id, { 
+      page, 
+      pageSize: practicesPagination.value.pageSize 
+    })
+    practices.value = res.data
+    practicesPagination.value = res.pagination || {
+      page: 1,
+      pageSize: practicesPagination.value.pageSize,
+      total: res.data.length,
+      totalPages: 1
+    }
+  } catch (error) {
+    console.error('加载练习记录失败:', error)
+  }
+}
+
+// 分页处理
+const handlePracticePageChange = (page) => {
+  loadPractices(page)
+}
+
+// 删除练习记录
+const handleDeletePractice = async (practice, event) => {
+  event.stopPropagation()
+  
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除练习"${practice.question_title || '练习'}"吗？删除后无法恢复。`,
+      '删除确认',
+      { type: 'warning' }
+    )
+    
+    await deletePractice(practice.id)
+    ElMessage.success('删除成功')
+    
+    // 重新加载练习记录
+    await loadPractices(practicesPagination.value.page)
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('删除失败: ' + (error.message || '未知错误'))
+    }
+  }
 }
 
 // 查看练习详情
@@ -373,6 +425,14 @@ onUnmounted(() => {
                 >
                   重新练习
                 </el-button>
+                <el-button 
+                  type="danger" 
+                  size="small"
+                  text
+                  @click="handleDeletePractice(practice, $event)"
+                >
+                  删除
+                </el-button>
               </div>
             </el-card>
             
@@ -381,7 +441,18 @@ onUnmounted(() => {
             </el-button>
           </div>
           
-          <el-empty v-else description="暂无练习记录">
+          <!-- 分页 -->
+          <div class="pagination-wrapper" v-if="practicesPagination.total > practicesPagination.pageSize">
+            <el-pagination
+              v-model:current-page="practicesPagination.page"
+              :page-size="practicesPagination.pageSize"
+              :total="practicesPagination.total"
+              layout="total, prev, pager, next"
+              @current-change="handlePracticePageChange"
+            />
+          </div>
+          
+          <el-empty v-else-if="practices.length === 0" description="暂无练习记录">
             <el-button type="primary" @click="startPractice">开始第一次练习</el-button>
           </el-empty>
         </el-tab-pane>
@@ -756,6 +827,15 @@ onUnmounted(() => {
   gap: 8px;
   margin-left: 16px;
   flex-shrink: 0;
+}
+
+/* 分页 */
+.pagination-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f0f0;
 }
 
 /* 相关技巧 */

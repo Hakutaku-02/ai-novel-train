@@ -1,6 +1,6 @@
 {
   "name": "ai-novel-trainer-desktop",
-  "version": "1.0.2-alpha",
+  "version": "1.0.3-alpha",
   "description": "AI 网文写作训练系统 - 桌面版",
   "main": "main.js",
   "author": "AI Novel Trainer Team",
@@ -106,10 +106,6 @@
         {
           "target": "nsis",
           "arch": ["x64", "ia32"]
-        },
-        {
-          "target": "portable",
-          "arch": ["x64"]
         }
       ]
     },
@@ -122,7 +118,8 @@
       "installerHeaderIcon": "build/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AI网文训练师"
+      "shortcutName": "AI网文训练师",
+      "differentialPackage": true
     },
     "linux": {
       "icon": "build/icons",
@@ -133,7 +130,7 @@
       "provider": "github",
       "owner": "jkxiongxin",
       "repo": "ai-novel-train",
-      "releaseType": "release"
+      "releaseType": "prerelease"
     }
   }
 }

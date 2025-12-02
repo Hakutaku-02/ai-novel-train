@@ -5,7 +5,7 @@
  */
 
 const { autoUpdater } = require('electron-updater');
-const { dialog, BrowserWindow, ipcMain } = require('electron');
+const { dialog, BrowserWindow, ipcMain, shell } = require('electron');
 const log = require('electron-log');
 
 // 配置日志
@@ -17,6 +17,8 @@ let updateAvailable = false;
 let updateDownloaded = false;
 let downloadProgress = 0;
 let updateInfo = null;
+let isDownloading = false;
+let progressDialog = null;
 
 /**
  * 初始化自动更新
@@ -26,6 +28,9 @@ function initAutoUpdater(mainWindow) {
   // 配置更新选项
   autoUpdater.autoDownload = false; // 不自动下载，让用户选择
   autoUpdater.autoInstallOnAppQuit = true; // 退出时自动安装
+  
+  // 允许预发布版本更新（因为当前版本是 alpha）
+  autoUpdater.allowPrerelease = true;
   
   // 检查更新时触发
   autoUpdater.on('checking-for-update', () => {
@@ -54,7 +59,18 @@ function initAutoUpdater(mainWindow) {
   // 下载进度
   autoUpdater.on('download-progress', (progressObj) => {
     downloadProgress = progressObj.percent;
-    log.info(`下载进度: ${progressObj.percent.toFixed(2)}%`);
+    const progressPercent = progressObj.percent.toFixed(1);
+    const speedMB = (progressObj.bytesPerSecond / 1024 / 1024).toFixed(2);
+    const transferredMB = (progressObj.transferred / 1024 / 1024).toFixed(2);
+    const totalMB = (progressObj.total / 1024 / 1024).toFixed(2);
+    
+    log.info(`下载进度: ${progressPercent}% (${transferredMB}MB/${totalMB}MB) 速度: ${speedMB}MB/s`);
+    
+    // 更新进度窗口标题（如果存在）
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setProgressBar(progressObj.percent / 100);
+    }
+    
     sendStatusToWindow(mainWindow, 'downloading', {
       percent: progressObj.percent,
       bytesPerSecond: progressObj.bytesPerSecond,
@@ -67,6 +83,13 @@ function initAutoUpdater(mainWindow) {
   autoUpdater.on('update-downloaded', (info) => {
     log.info('更新下载完成');
     updateDownloaded = true;
+    isDownloading = false;
+    
+    // 清除进度条
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setProgressBar(-1);
+    }
+    
     sendStatusToWindow(mainWindow, 'downloaded', info);
     
     // 提示用户重启安装
@@ -76,7 +99,17 @@ function initAutoUpdater(mainWindow) {
   // 更新错误
   autoUpdater.on('error', (error) => {
     log.error('更新错误:', error);
+    isDownloading = false;
+    
+    // 清除进度条
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setProgressBar(-1);
+    }
+    
     sendStatusToWindow(mainWindow, 'error', { message: error.message });
+    
+    // 显示错误对话框，提供手动下载选项
+    showUpdateErrorDialog(mainWindow, error);
   });
 
   // 注册 IPC 事件处理
@@ -137,16 +170,83 @@ function showUpdateDialog(mainWindow, info) {
     title: '发现新版本',
     message: `发现新版本 ${info.version}`,
     detail: `当前版本: ${require('./package.json').version}\n新版本: ${info.version}\n\n更新说明:\n${releaseNotes}\n\n更新不会影响您的数据，是否立即下载？`,
-    buttons: ['立即下载', '稍后提醒'],
+    buttons: ['立即下载', '前往下载页面', '稍后提醒'],
     defaultId: 0,
-    cancelId: 1
+    cancelId: 2
   }).then(({ response }) => {
     if (response === 0) {
       // 开始下载
-      autoUpdater.downloadUpdate();
-      sendStatusToWindow(mainWindow, 'downloading', { percent: 0 });
+      startDownload(mainWindow);
+    } else if (response === 1) {
+      // 打开 GitHub Release 页面
+      openReleasePage();
     }
   });
+}
+
+/**
+ * 开始下载更新
+ */
+function startDownload(mainWindow) {
+  if (isDownloading) {
+    log.info('更新正在下载中...');
+    return;
+  }
+  
+  isDownloading = true;
+  log.info('开始下载更新...');
+  
+  // 显示下载开始提示
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: '开始下载',
+    message: '正在下载更新...',
+    detail: '下载进度将显示在任务栏中。\n下载完成后会自动提示您安装。',
+    buttons: ['确定']
+  });
+  
+  // 开始下载
+  autoUpdater.downloadUpdate().catch((error) => {
+    log.error('下载更新失败:', error);
+    isDownloading = false;
+    showUpdateErrorDialog(mainWindow, error);
+  });
+  
+  sendStatusToWindow(mainWindow, 'downloading', { percent: 0 });
+}
+
+/**
+ * 显示更新错误对话框
+ */
+function showUpdateErrorDialog(mainWindow, error) {
+  const errorMessage = error.message || '未知错误';
+  
+  dialog.showMessageBox(mainWindow, {
+    type: 'error',
+    title: '更新失败',
+    message: '自动更新下载失败',
+    detail: `错误信息: ${errorMessage}\n\n您可以前往 GitHub 手动下载最新版本。`,
+    buttons: ['前往下载页面', '稍后再试', '关闭'],
+    defaultId: 0,
+    cancelId: 2
+  }).then(({ response }) => {
+    if (response === 0) {
+      openReleasePage();
+    } else if (response === 1) {
+      // 稍后重试
+      setTimeout(() => {
+        checkForUpdates(false);
+      }, 60000); // 1分钟后重试
+    }
+  });
+}
+
+/**
+ * 打开 GitHub Release 页面
+ */
+function openReleasePage() {
+  const releaseUrl = 'https://github.com/jkxiongxin/ai-novel-train/releases';
+  shell.openExternal(releaseUrl);
 }
 
 /**
@@ -189,8 +289,8 @@ function registerIPCHandlers(mainWindow) {
 
   // 开始下载更新
   ipcMain.handle('download-update', async () => {
-    if (updateAvailable) {
-      autoUpdater.downloadUpdate();
+    if (updateAvailable && !isDownloading) {
+      startDownload(mainWindow);
       return true;
     }
     return false;
@@ -216,8 +316,15 @@ function registerIPCHandlers(mainWindow) {
       updateAvailable,
       updateDownloaded,
       downloadProgress,
-      updateInfo
+      updateInfo,
+      isDownloading
     };
+  });
+  
+  // 打开发布页面
+  ipcMain.handle('open-release-page', () => {
+    openReleasePage();
+    return true;
   });
 }
 

@@ -604,6 +604,48 @@ router.get('/:id/questions', (req, res) => {
   }
 });
 
+// 删除练习记录
+router.delete('/practices/:practiceId', (req, res) => {
+  try {
+    const db = getDatabase();
+    const { practiceId } = req.params;
+    
+    // 检查练习是否存在
+    const practice = db.prepare('SELECT * FROM skill_practices WHERE id = ?').get(practiceId);
+    if (!practice) {
+      return res.status(404).json({
+        success: false,
+        message: '练习记录不存在'
+      });
+    }
+    
+    // 删除相关的评审记录
+    db.prepare('DELETE FROM skill_evaluations WHERE practice_id = ?').run(practiceId);
+    
+    // 删除练习记录
+    db.prepare('DELETE FROM skill_practices WHERE id = ?').run(practiceId);
+    
+    // 更新知识点练习次数
+    db.prepare(`
+      UPDATE writing_skills SET
+        practice_count = practice_count - 1,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(practice.skill_id);
+    
+    res.json({
+      success: true,
+      message: '练习记录已删除'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: '删除练习记录失败',
+      error: error.message
+    });
+  }
+});
+
 // 删除题库中的题目
 router.delete('/questions/:questionId', (req, res) => {
   try {
