@@ -41,7 +41,8 @@
   },
   "build": {
     "appId": "com.ai-novel-trainer.desktop",
-    "productName": "AI网文训练师",
+    "productName": "AI-Novel-Trainer",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "copyright": "Copyright © 2024 AI Novel Trainer",
     "directories": {
       "output": "dist",
