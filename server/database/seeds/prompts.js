@@ -806,6 +806,217 @@ const defaultPrompts = [
 5. 只返回JSON`,
     variables: JSON.stringify(['topic', 'count']),
     is_default: 1
+  },
+
+  // ========== 写作技巧学习模块 Prompt ==========
+  {
+    category: 'skill',
+    type: 'generate',
+    name: '写作技巧知识点生成',
+    description: '根据技巧名称生成完整的知识点内容',
+    content: `你是一位专业的小说写作教练，拥有丰富的创作和教学经验。请根据用户提供的写作技巧名称，生成一份完整的学习资料。
+
+用户想要学习的技巧：{{skillName}}
+{{#category}}
+所属分类：{{category}}
+{{/category}}
+
+请生成详细的知识点内容，包含以下部分：
+
+1. **技巧概述**（50字以内的简短描述）
+2. **详细讲解**（500-1000字，包含原理、方法、注意事项，使用 Markdown 格式）
+3. **核心要点**（3-5条，每条20字以内，便于记忆）
+4. **优秀示例**（2-3个，每个100-200字，来自网络小说的典型场景）
+5. **常见错误**（2-3个，说明为什么是错误以及如何避免）
+6. **练习建议**（如何针对性练习这个技巧）
+
+请按以下 JSON 格式输出：
+{
+  "name": "技巧名称",
+  "category": "分类（dialogue/description/narrative/structure/emotion/comprehensive）",
+  "difficulty": "难度（easy/medium/hard）",
+  "summary": "简短描述（50字以内）",
+  "content": "详细讲解（Markdown格式，500-1000字）",
+  "keyPoints": ["要点1", "要点2", "要点3"],
+  "examples": [
+    {
+      "title": "示例标题",
+      "content": "示例内容（100-200字）",
+      "analysis": "示例分析（这个示例好在哪里）"
+    }
+  ],
+  "commonMistakes": [
+    {
+      "mistake": "错误做法描述",
+      "reason": "为什么这是错误的",
+      "correction": "正确的做法"
+    }
+  ],
+  "practiceAdvice": "练习建议（100字以内）"
+}
+
+分类说明：
+- dialogue: 对白技巧（人物对话、潜台词、语言个性化等）
+- description: 描写技巧（环境、人物外貌、动作、心理等描写）
+- narrative: 叙事技巧（视角、时间线、叙事节奏等）
+- structure: 结构技巧（开篇、转折、高潮、伏笔等）
+- emotion: 情感技巧（情绪渲染、氛围营造、共情等）
+- comprehensive: 综合技巧（人物塑造、世界观构建等）
+
+只输出JSON，不要有其他内容。`,
+    variables: JSON.stringify(['skillName', 'category']),
+    is_default: 1
+  },
+  {
+    category: 'skill',
+    type: 'practice_generate',
+    name: '技巧练习题生成',
+    description: '根据知识点生成针对性练习题',
+    content: `你是一位专业的网络小说写作训练题目设计师。请根据以下写作技巧知识点，设计一道针对性的练习题。
+
+## 技巧信息
+名称：{{skillName}}
+分类：{{category}}
+难度：{{difficulty}}
+概述：{{summary}}
+核心要点：
+{{keyPoints}}
+
+## 设计要求
+请设计一道能够检验用户是否掌握这个技巧的练习题，题目要：
+1. 明确要求使用该技巧
+2. 提供足够的场景背景让用户可以直接开始写作
+3. 字数要求合理（根据难度：简单200-400字，中等400-600字，困难600-800字）
+4. 有明确的评判标准，便于后续 AI 评审
+
+## 输出格式
+请按以下 JSON 格式输出：
+{
+  "title": "题目标题（简洁明了，10-20字）",
+  "skillId": {{skillId}},
+  "skillName": "{{skillName}}",
+  "background": "场景背景描述（100-200字，包含时间、地点、人物、前情）",
+  "task": "具体写作任务描述（清晰说明用户需要写什么）",
+  "requirements": [
+    "要求1：必须使用的技巧要点",
+    "要求2：具体的写作约束",
+    "要求3：其他要求"
+  ],
+  "skillFocus": ["需要重点运用的技巧要点1", "要点2"],
+  "wordCountRange": {"min": 最小字数, "max": 最大字数},
+  "evaluationCriteria": [
+    {"criterion": "技巧运用", "weight": 40, "description": "是否正确运用了目标技巧"},
+    {"criterion": "完成度", "weight": 20, "description": "是否完成题目要求"},
+    {"criterion": "文笔表现", "weight": 20, "description": "语言流畅度和表现力"},
+    {"criterion": "整体效果", "weight": 20, "description": "作品的完整性和可读性"}
+  ],
+  "hints": ["提示1：可以从这个角度入手", "提示2：注意这个细节"]
+}
+
+只输出JSON，不要有其他内容。`,
+    variables: JSON.stringify(['skillId', 'skillName', 'category', 'difficulty', 'summary', 'keyPoints']),
+    is_default: 1
+  },
+  {
+    category: 'skill',
+    type: 'evaluate',
+    name: '技巧练习评审',
+    description: '对技巧练习作品进行专业评审',
+    content: `你是一位资深的网络小说编辑，请针对特定写作技巧对用户的练习作品进行专业评审。
+
+## 练习的目标技巧
+名称：{{skillName}}
+核心要点：
+{{keyPoints}}
+
+## 练习题目
+{{questionContent}}
+
+## 用户作品
+{{userAnswer}}
+
+## 评审要求
+请从以下角度进行评审，重点关注用户对目标技巧的理解和运用：
+
+1. **技巧运用度** (0-40分) - 权重最高
+   - 是否正确理解了技巧的核心要点
+   - 是否在作品中有效运用了该技巧
+   - 技巧使用是否自然、恰当、有效果
+
+2. **完成度** (0-20分)
+   - 是否完成了题目的所有要求
+   - 字数是否达标
+   - 场景是否完整
+
+3. **文笔表现** (0-20分)
+   - 语言是否流畅自然
+   - 用词是否准确生动
+   - 表达是否有感染力
+
+4. **整体效果** (0-20分)
+   - 作品的整体完整性
+   - 阅读体验
+   - 是否达到了预期效果
+
+## 评分标准
+- 90-100分 (S级)：技巧运用出色，作品完整且有亮点
+- 80-89分 (A级)：技巧运用良好，完成度高
+- 70-79分 (B级)：技巧运用基本正确，有一定不足
+- 60-69分 (C级)：技巧运用有明显问题，需要改进
+- 60分以下 (D级)：未能正确运用技巧，需要重新学习
+
+## 输出格式
+请按以下 JSON 格式输出评审结果：
+{
+  "totalScore": 总分（满分100，请严格按照评分标准打分），
+  "grade": "评级（S/A/B/C/D）",
+  "dimensions": {
+    "skillApplication": {
+      "score": 分数（0-40）,
+      "comment": "技巧运用评价（100-150字，重点分析技巧使用情况）"
+    },
+    "completion": {
+      "score": 分数（0-20）,
+      "comment": "完成度评价（50-80字）"
+    },
+    "writing": {
+      "score": 分数（0-20）,
+      "comment": "文笔评价（50-80字）"
+    },
+    "overall": {
+      "score": 分数（0-20）,
+      "comment": "整体效果评价（50-80字）"
+    }
+  },
+  "skillAnalysis": {
+    "understood": "用户对技巧的理解程度分析（50-100字）",
+    "applied": "技巧在作品中的具体运用表现（50-100字）",
+    "needsImprovement": "技巧运用方面需要改进的具体问题（50-100字）"
+  },
+  "highlights": [
+    "亮点1：具体指出作品中做得好的地方",
+    "亮点2：另一个亮点"
+  ],
+  "improvements": [
+    {
+      "issue": "问题1：具体描述问题所在",
+      "suggestion": "改进建议：如何改进",
+      "example": "修改示例（可选，展示如何修改某个段落）"
+    },
+    {
+      "issue": "问题2",
+      "suggestion": "建议2",
+      "example": ""
+    }
+  ],
+  "overallComment": "总体评价（150-200字，像一位负责任的编辑给作者的反馈，既要指出问题，也要鼓励进步）",
+  "masteryLevel": "技巧掌握程度（未掌握/初步掌握/基本掌握/熟练掌握/精通）",
+  "nextStepAdvice": "下一步学习建议（根据本次练习表现，建议用户接下来应该如何提升）"
+}
+
+只输出JSON，不要有其他内容。`,
+    variables: JSON.stringify(['skillName', 'keyPoints', 'questionContent', 'userAnswer']),
+    is_default: 1
   }
 ];
 

@@ -192,14 +192,153 @@ const migrations = [
 
       console.log('迁移 v2: 趣味练习表创建完成');
     }
+  },
+  {
+    version: 3,
+    name: '写作技巧学习模块',
+    description: '添加写作技巧知识点、练习、评审、学习记录等相关表',
+    up: (db) => {
+      console.log('迁移 v3: 创建写作技巧学习相关表...');
+      
+      // 创建写作技巧知识点表
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS writing_skills (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          category TEXT NOT NULL,
+          difficulty TEXT DEFAULT 'medium',
+          summary TEXT,
+          content TEXT,
+          key_points TEXT,
+          examples TEXT,
+          common_mistakes TEXT,
+          practice_advice TEXT,
+          related_skills TEXT,
+          source TEXT DEFAULT 'preset',
+          is_active BOOLEAN DEFAULT 1,
+          study_count INTEGER DEFAULT 0,
+          practice_count INTEGER DEFAULT 0,
+          avg_score REAL DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // 创建技巧练习表
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_practices (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          skill_id INTEGER NOT NULL,
+          question_title TEXT,
+          question_content TEXT,
+          user_answer TEXT,
+          word_count INTEGER DEFAULT 0,
+          time_spent INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'draft',
+          submitted_at DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (skill_id) REFERENCES writing_skills(id) ON DELETE CASCADE
+        )
+      `);
+
+      // 创建技巧评审表
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_evaluations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          practice_id INTEGER NOT NULL,
+          skill_id INTEGER NOT NULL,
+          total_score REAL,
+          grade TEXT,
+          dimension_scores TEXT,
+          skill_analysis TEXT,
+          highlights TEXT,
+          improvements TEXT,
+          overall_comment TEXT,
+          mastery_level TEXT,
+          next_step_advice TEXT,
+          raw_response TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (practice_id) REFERENCES skill_practices(id) ON DELETE CASCADE,
+          FOREIGN KEY (skill_id) REFERENCES writing_skills(id) ON DELETE CASCADE
+        )
+      `);
+
+      // 创建学习记录表
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_study_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          skill_id INTEGER NOT NULL,
+          study_duration INTEGER DEFAULT 0,
+          completed BOOLEAN DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (skill_id) REFERENCES writing_skills(id) ON DELETE CASCADE
+        )
+      `);
+
+      // 创建索引
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_skills_category ON writing_skills(category);
+        CREATE INDEX IF NOT EXISTS idx_skills_difficulty ON writing_skills(difficulty);
+        CREATE INDEX IF NOT EXISTS idx_skills_source ON writing_skills(source);
+        CREATE INDEX IF NOT EXISTS idx_skill_practices_skill ON skill_practices(skill_id);
+        CREATE INDEX IF NOT EXISTS idx_skill_practices_status ON skill_practices(status);
+        CREATE INDEX IF NOT EXISTS idx_skill_evaluations_practice ON skill_evaluations(practice_id);
+        CREATE INDEX IF NOT EXISTS idx_skill_study_logs_skill ON skill_study_logs(skill_id);
+      `);
+
+      // 添加 AI 功能锚点
+      const features = [
+        { key: 'skill_generate', name: '技巧知识点生成', description: 'AI 根据技巧名称生成完整知识点内容' },
+        { key: 'skill_practice_generate', name: '技巧练习题生成', description: 'AI 根据知识点生成针对性练习题' },
+        { key: 'skill_practice_evaluate', name: '技巧练习评审', description: 'AI 对技巧练习作品进行专业评审' }
+      ];
+
+      const insertFeature = db.prepare(`
+        INSERT OR IGNORE INTO ai_feature_config (feature_key, feature_name, feature_description)
+        VALUES (?, ?, ?)
+      `);
+
+      for (const feature of features) {
+        insertFeature.run(feature.key, feature.name, feature.description);
+      }
+
+      console.log('迁移 v3: 写作技巧学习表创建完成');
+    }
+  },
+  {
+    version: 4,
+    name: '技巧练习题库',
+    description: '添加题库表，用于存储生成的练习题供复用',
+    up: (db) => {
+      console.log('迁移 v4: 创建技巧练习题库表...');
+      
+      // 创建题库表
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_question_bank (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          skill_id INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          keywords TEXT,
+          difficulty TEXT DEFAULT 'medium',
+          use_count INTEGER DEFAULT 0,
+          is_active BOOLEAN DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (skill_id) REFERENCES writing_skills(id) ON DELETE CASCADE
+        )
+      `);
+
+      // 创建索引
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_question_bank_skill ON skill_question_bank(skill_id);
+        CREATE INDEX IF NOT EXISTS idx_question_bank_active ON skill_question_bank(is_active);
+      `);
+
+      console.log('迁移 v4: 技巧练习题库表创建完成');
+    }
   }
-  // 后续版本在此添加新的迁移
-  // {
-  //   version: 3,
-  //   name: '下一个功能',
-  //   description: '...',
-  //   up: (db) => { ... }
-  // }
 ];
 
 /**

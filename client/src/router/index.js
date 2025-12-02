@@ -180,6 +180,31 @@ const routes = [
     name: 'WordPracticeReview',
     component: () => import('../views/WordPractice/Review.vue'),
     meta: { title: '复习模式' }
+  },
+  // 写作技巧学习路由
+  {
+    path: '/skills',
+    name: 'Skills',
+    component: () => import('../views/Skills/Index.vue'),
+    meta: { title: '技巧学习' }
+  },
+  {
+    path: '/skills/:id',
+    name: 'SkillDetail',
+    component: () => import('../views/Skills/Detail.vue'),
+    meta: { title: '技巧详情' }
+  },
+  {
+    path: '/skills/:id/practice',
+    name: 'SkillPractice',
+    component: () => import('../views/Skills/Practice.vue'),
+    meta: { title: '技巧练习' }
+  },
+  {
+    path: '/skills/practice/:practiceId',
+    name: 'SkillEvaluation',
+    component: () => import('../views/Skills/Evaluation.vue'),
+    meta: { title: '练习评审' }
   }
 ]
 

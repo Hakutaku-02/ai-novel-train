@@ -22,7 +22,7 @@ const navItems = [
   { path: '/practice', icon: Edit, title: '练习', match: ['/practice', '/questions'] },
   { path: '/freewrite', icon: Sunrise, title: '随心写', match: ['/freewrite'] },
   { path: '/history', icon: Collection, title: '历史', match: ['/history', '/evaluation'] },
-  { path: '/settings', icon: Setting, title: '设置', match: ['/settings', '/prompts', '/dictionary', '/statistics', '/chapters', '/typing'] }
+  { path: '/settings', icon: Setting, title: '设置', match: ['/settings', '/prompts', '/dictionary', '/statistics', '/chapters', '/typing', '/skills'] }
 ]
 
 const activeIndex = computed(() => {

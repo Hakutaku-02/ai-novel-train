@@ -53,6 +53,7 @@ const menuItems = [
   { path: '/practice', icon: Edit, title: '写作练习' },
   { path: '/freewrite', icon: Sunrise, title: '随心练习' },
   { path: '/typing', icon: EditPen, title: '抄书练习' },
+  { path: '/skills', icon: Document, title: '技巧学习' },
   { path: '/chapters', icon: Notebook, title: '章节管理' },
   { path: '/questions', icon: Document, title: '题库管理' },
   { path: '/history', icon: Collection, title: '练习历史' },
@@ -67,6 +68,7 @@ const activeMenu = computed(() => {
   if (path.startsWith('/practice')) return '/practice'
   if (path.startsWith('/freewrite')) return '/freewrite'
   if (path.startsWith('/typing')) return '/typing'
+  if (path.startsWith('/skills')) return '/skills'
   if (path.startsWith('/chapters')) return '/chapters'
   if (path.startsWith('/settings')) return '/settings'
   if (path.startsWith('/evaluation')) return '/history'

@@ -32,7 +32,7 @@
 
 ### 📦 下载
 
+- **macOS (Apple Silicon)**: `AI网文训练师-1.0.2-alpha-arm64.dmg`
+- **macOS (Intel)**: `AI网文训练师-1.0.2-alpha.dmg`
 - **Windows 安装程序**: `AI网文训练师 Setup 1.0.2-alpha.exe`
 - **Windows 便携版**: `AI网文训练师 1.0.2-alpha.exe`
-
-> ⚠️ 此版本仅包含 Windows 安装包。macOS 版本需要在 macOS 环境下打包。

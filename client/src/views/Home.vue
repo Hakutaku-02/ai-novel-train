@@ -186,6 +186,25 @@ onMounted(async () => {
       </div>
     </el-card>
     
+    <!-- 写作技巧学习入口 -->
+    <el-card class="freewrite-entry skills-entry" @click="$router.push('/skills')">
+      <div class="freewrite-content">
+        <div class="freewrite-left">
+          <div class="freewrite-icon">📚</div>
+          <div class="freewrite-info">
+            <h3>写作技巧学习</h3>
+            <p>系统学习小说写作技巧，AI辅助练习与评估</p>
+          </div>
+        </div>
+        <div class="freewrite-features">
+          <el-tag size="small" type="primary">🎯 知识点</el-tag>
+          <el-tag size="small" type="success">📝 针对练习</el-tag>
+          <el-tag size="small" type="warning">✨ AI评估</el-tag>
+        </div>
+        <el-icon class="freewrite-arrow"><ArrowRight /></el-icon>
+      </div>
+    </el-card>
+    
     <!-- 最近7天 -->
     <el-card class="recent-stats">
       <template #header>
