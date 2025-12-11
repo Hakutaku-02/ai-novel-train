@@ -8,6 +8,8 @@
 - `/desktop/package.json` - `version` 字段
 - `/package.json` - `version` 字段（根目录）
 
+⚠️ 注意：`/desktop/package.json` 中的 `version` 字段必须使用标准 semver（例如 `1.0.5-alpha`），不要包含 leading `v` 前缀，否则会导致生成的 `latest.yml` 与发布的文件名不匹配，进而导致自动更新下载失败。
+
 ### 2. 更新 CHANGELOG
 
 在 `/CHANGELOG.md` 中添加新版本的更新说明。

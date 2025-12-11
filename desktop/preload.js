@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 获取更新状态
   getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
+  // 获取自动安装设置值
+  getAutoInstallStatus: () => ipcRenderer.invoke('get-auto-install-status'),
   
   // 打开发布页面
   openReleasePage: () => ipcRenderer.invoke('open-release-page'),
@@ -51,6 +53,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeUpdateStatusListener: () => {
     ipcRenderer.removeAllListeners('update-status');
   },
+  // 设置下载完成后是否自动安装
+  setAutoInstallOnDownload: (value) => ipcRenderer.invoke('set-auto-install-on-download', value),
 
   // ========== 窗口控制 API (Windows) ==========
   

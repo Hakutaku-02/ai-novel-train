@@ -1,7 +1,38 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { getDatabase } = require('../database/init');
-const { analyzeChapter } = require('../services/aiService');
+const { analyzeChapter, generateChapterRegex } = require('../services/aiService');
+
+// 配置文件上传
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + Buffer.from(file.originalname, 'latin1').toString('utf8'));
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB 限制
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === '.txt') {
+      cb(null, true);
+    } else {
+      cb(new Error('只支持 .txt 文件格式'));
+    }
+  }
+});
 
 // 片段类型定义
 const SEGMENT_TYPES = {
@@ -42,6 +73,241 @@ router.get('/writing-styles', (req, res) => {
     success: true,
     data: WRITING_STYLES
   });
+});
+
+// 获取所有小说名列表（用于筛选）
+router.get('/novel-names', (req, res) => {
+  try {
+    const db = getDatabase();
+    const novels = db.prepare(`
+      SELECT DISTINCT novel_name 
+      FROM novel_chapters 
+      WHERE novel_name IS NOT NULL AND novel_name != ''
+      ORDER BY novel_name ASC
+    `).all();
+    
+    res.json({
+      success: true,
+      data: novels.map(n => n.novel_name)
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: '获取小说名列表失败',
+      error: error.message
+    });
+  }
+});
+
+// 上传小说文件
+router.post('/upload-novel', upload.single('file'), async (req, res) => {
+  try {
+    const { novel_name, author } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: '请上传文件'
+      });
+    }
+    
+    if (!novel_name) {
+      return res.status(400).json({
+        success: false,
+        message: '请填写小说名'
+      });
+    }
+    
+    // 读取文件内容
+    const filePath = req.file.path;
+    let content;
+    try {
+      content = fs.readFileSync(filePath, 'utf8');
+    } catch (readError) {
+      // 尝试 GBK 编码
+      const iconv = require('iconv-lite');
+      const buffer = fs.readFileSync(filePath);
+      content = iconv.decode(buffer, 'gbk');
+    }
+    
+    // 删除临时文件
+    fs.unlinkSync(filePath);
+    
+    // 提取前5000字用于AI分析
+    const sampleText = content.substring(0, 5000);
+    
+    res.json({
+      success: true,
+      data: {
+        content,
+        sample_text: sampleText,
+        total_length: content.length,
+        novel_name,
+        author: author || null
+      },
+      message: '文件上传成功，请进行章节拆分'
+    });
+  } catch (error) {
+    // 清理临时文件
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({
+      success: false,
+      message: '文件上传失败',
+      error: error.message
+    });
+  }
+});
+
+// AI 生成章节标题正则表达式
+router.post('/generate-chapter-regex', async (req, res) => {
+  try {
+    const { sample_text } = req.body;
+    
+    if (!sample_text) {
+      return res.status(400).json({
+        success: false,
+        message: '请提供示例文本'
+      });
+    }
+    
+    const result = await generateChapterRegex(sample_text);
+    
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: '生成正则表达式失败',
+      error: error.message
+    });
+  }
+});
+
+// 使用正则表达式拆分章节并预览
+router.post('/split-chapters-preview', (req, res) => {
+  try {
+    const { content, regex_pattern, novel_name, author } = req.body;
+    
+    if (!content || !regex_pattern) {
+      return res.status(400).json({
+        success: false,
+        message: '内容和正则表达式不能为空'
+      });
+    }
+    
+    let regex;
+    try {
+      regex = new RegExp(regex_pattern, 'gm');
+    } catch (regexError) {
+      return res.status(400).json({
+        success: false,
+        message: '正则表达式格式错误: ' + regexError.message
+      });
+    }
+    
+    // 查找所有章节标题匹配
+    const matches = [...content.matchAll(regex)];
+    
+    if (matches.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '未找到匹配的章节标题，请调整正则表达式'
+      });
+    }
+    
+    // 拆分章节
+    const chapters = [];
+    for (let i = 0; i < matches.length; i++) {
+      const match = matches[i];
+      const title = match[0].trim();
+      const startIndex = match.index + match[0].length;
+      const endIndex = i < matches.length - 1 ? matches[i + 1].index : content.length;
+      const chapterContent = content.substring(startIndex, endIndex).trim();
+      
+      if (chapterContent.length > 0) {
+        chapters.push({
+          index: i,
+          title,
+          content: chapterContent,
+          word_count: chapterContent.replace(/\s/g, '').length,
+          novel_name,
+          author: author || null,
+          selected: true  // 默认全选
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        chapters,
+        total: chapters.length,
+        total_words: chapters.reduce((sum, ch) => sum + ch.word_count, 0)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: '章节拆分失败',
+      error: error.message
+    });
+  }
+});
+
+// 批量插入选中的章节
+router.post('/batch-insert', (req, res) => {
+  try {
+    const db = getDatabase();
+    const { chapters } = req.body;
+    
+    if (!chapters || !Array.isArray(chapters) || chapters.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '请选择要插入的章节'
+      });
+    }
+    
+    const insertChapter = db.prepare(`
+      INSERT INTO novel_chapters (title, novel_name, author, content, word_count)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    
+    const insertMany = db.transaction((chaptersToInsert) => {
+      const insertedIds = [];
+      for (const chapter of chaptersToInsert) {
+        const result = insertChapter.run(
+          chapter.title,
+          chapter.novel_name || null,
+          chapter.author || null,
+          chapter.content,
+          chapter.word_count || chapter.content.replace(/\s/g, '').length
+        );
+        insertedIds.push(result.lastInsertRowid);
+      }
+      return insertedIds;
+    });
+    
+    const insertedIds = insertMany(chapters);
+    
+    res.json({
+      success: true,
+      data: {
+        inserted_count: insertedIds.length,
+        ids: insertedIds
+      },
+      message: `成功插入 ${insertedIds.length} 个章节`
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: '批量插入章节失败',
+      error: error.message
+    });
+  }
 });
 
 // 获取章节列表

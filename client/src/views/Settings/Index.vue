@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import UpdateModal from '../../components/UpdateModal.vue'
 import { getSettings, updateSettings } from '../../api/settings'
 import { isNativeApp } from '../../utils/request'
 import { ElMessage } from 'element-plus'
@@ -19,6 +20,9 @@ const settings = ref({
 
 // 是否是移动端 APP
 const isMobileApp = ref(isNativeApp())
+const appVersion = ref('')
+const autoInstallAfterDownload = ref(false)
+const updateStatusLabel = ref('')
 
 const fontFamilyOptions = [
   { label: '系统默认', value: 'system' },
@@ -87,8 +91,74 @@ function resetSettings() {
   ElMessage.info('已重置为默认设置')
 }
 
+// ----- 自动更新相关 UI 处理 -----
+async function onCheckForUpdates() {
+  if (window?.electronAPI?.checkForUpdates) {
+    try {
+      await window.electronAPI.checkForUpdates()
+    } catch (err) {
+      console.error('checkForUpdates failed:', err)
+    }
+  }
+}
+
+async function onCheckAndDownload() {
+  if (window?.electronAPI?.getUpdateStatus) {
+    try {
+      const status = await window.electronAPI.getUpdateStatus()
+      if (status.updateAvailable) {
+        await window.electronAPI.downloadUpdate()
+      } else {
+        await onCheckForUpdates()
+      }
+    } catch (err) {
+      console.error('checkAndDownload failed:', err)
+    }
+  } else {
+    await onCheckForUpdates()
+  }
+}
+
+// toggle 自动安装选项
+async function onToggleAutoInstall(value) {
+  try {
+    if (window?.electronAPI?.setAutoInstallOnDownload) {
+      await window.electronAPI.setAutoInstallOnDownload(Boolean(value))
+    }
+  } catch (err) {
+    console.error('设置自动安装失败', err)
+  }
+}
+
 onMounted(() => {
   loadSettings()
+  // 获取桌面版本信息（仅桌面端可用）
+  if (window?.electronAPI?.getAppVersion) {
+    window.electronAPI.getAppVersion().then(v => { appVersion.value = v }).catch(() => {})
+  }
+  // 获取当前更新状态（用于在设置页展示基本状态）
+  if (window?.electronAPI?.getUpdateStatus) {
+    window.electronAPI.getUpdateStatus().then(status => {
+      if (status) {
+        if (status.isDownloading) {
+          updateStatusLabel.value = `正在下载 (${(status.downloadProgress || 0).toFixed?.(1) || 0}%)`
+        } else if (status.updateAvailable) {
+          updateStatusLabel.value = `发现新版本 ${status.updateInfo?.version || ''}`
+        } else {
+          updateStatusLabel.value = '当前已是最新版本'
+        }
+        autoInstallAfterDownload.value = !!status.autoInstallOnDownload
+      }
+    }).catch(() => {})
+  }
+  // 查询 auto install 的当前配置
+  if (window?.electronAPI?.getAutoInstallStatus) {
+    window.electronAPI.getAutoInstallStatus().then(res => {
+      if (res && typeof res.autoInstallOnDownload !== 'undefined') {
+        autoInstallAfterDownload.value = !!res.autoInstallOnDownload
+      }
+    }).catch(() => {})
+  }
 })
 </script>
 
@@ -114,6 +184,18 @@ onMounted(() => {
       </template>
       
       <el-form label-width="140px">
+        <el-form-item label="应用版本">
+          <div>{{ appVersion || '客户端' }}</div>
+        </el-form-item>
+        <el-form-item label="应用更新">
+          <div class="update-actions">
+            <el-button @click="onCheckForUpdates">检查更新</el-button>
+            <el-button type="primary" @click="onCheckAndDownload">检查并下载</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="下载完成后自动安装">
+          <el-switch v-model="autoInstallAfterDownload" @change="onToggleAutoInstall" />
+        </el-form-item>
         <el-form-item label="主题模式">
           <el-radio-group v-model="settings.theme">
             <el-radio-button label="light">浅色</el-radio-button>
@@ -123,6 +205,7 @@ onMounted(() => {
         </el-form-item>
       </el-form>
     </el-card>
+    <UpdateModal />
     
     <el-card class="settings-card">
       <template #header>

@@ -1,14 +1,19 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, View, Refresh, Upload } from '@element-plus/icons-vue'
+import { Plus, Delete, View, Refresh, Upload, Document, Search } from '@element-plus/icons-vue'
 import { 
   getChapters, 
   createChapter, 
   deleteChapter, 
   analyzeChapter,
   getSegmentTypes,
-  getWritingStyles
+  getWritingStyles,
+  getNovelNames,
+  uploadNovel,
+  generateChapterRegex,
+  splitChaptersPreview,
+  batchInsertChapters
 } from '../../api/chapters'
 
 const loading = ref(false)
@@ -26,8 +31,31 @@ const formData = ref({
   content: ''
 })
 
+// 上传小说相关
+const uploadDialogVisible = ref(false)
+const uploadStep = ref(1) // 1: 上传文件, 2: 生成正则, 3: 预览章节
+const uploadLoading = ref(false)
+const novelUploadData = ref({
+  novel_name: '',
+  author: '',
+  content: '',
+  sample_text: '',
+  total_length: 0
+})
+const regexData = ref({
+  regex: '',
+  description: '',
+  examples: []
+})
+const splitChapters = ref([])
+const splitSummary = ref({
+  total: 0,
+  total_words: 0
+})
+
 const segmentTypes = ref({})
 const writingStyles = ref({})
+const novelNames = ref([])
 
 const statusOptions = [
   { value: '', label: '全部状态' },
@@ -38,6 +66,7 @@ const statusOptions = [
 ]
 
 const filterStatus = ref('')
+const filterNovelName = ref('')
 
 const statusMap = {
   pending: { text: '待分析', type: 'info' },
@@ -52,7 +81,8 @@ async function loadChapters() {
     const res = await getChapters({
       page: currentPage.value,
       pageSize: pageSize.value,
-      status: filterStatus.value || undefined
+      status: filterStatus.value || undefined,
+      novel_name: filterNovelName.value || undefined
     })
     chapters.value = res.data.list
     total.value = res.data.total
@@ -65,12 +95,14 @@ async function loadChapters() {
 
 async function loadMeta() {
   try {
-    const [typesRes, stylesRes] = await Promise.all([
+    const [typesRes, stylesRes, novelsRes] = await Promise.all([
       getSegmentTypes(),
-      getWritingStyles()
+      getWritingStyles(),
+      getNovelNames()
     ])
     segmentTypes.value = typesRes.data
     writingStyles.value = stylesRes.data
+    novelNames.value = novelsRes.data
   } catch (error) {
     console.error('加载元数据失败:', error)
   }
@@ -87,6 +119,138 @@ function openAddDialog() {
   dialogVisible.value = true
 }
 
+function openUploadDialog() {
+  uploadStep.value = 1
+  novelUploadData.value = {
+    novel_name: '',
+    author: '',
+    content: '',
+    sample_text: '',
+    total_length: 0
+  }
+  regexData.value = {
+    regex: '',
+    description: '',
+    examples: []
+  }
+  splitChapters.value = []
+  splitSummary.value = { total: 0, total_words: 0 }
+  uploadDialogVisible.value = true
+}
+
+async function handleFileUpload(uploadFile) {
+  if (!novelUploadData.value.novel_name) {
+    ElMessage.warning('请先填写小说名')
+    return false
+  }
+  
+  uploadLoading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', uploadFile.raw)
+    formData.append('novel_name', novelUploadData.value.novel_name)
+    formData.append('author', novelUploadData.value.author || '')
+    
+    const res = await uploadNovel(formData)
+    novelUploadData.value.content = res.data.content
+    novelUploadData.value.sample_text = res.data.sample_text
+    novelUploadData.value.total_length = res.data.total_length
+    
+    ElMessage.success(`文件上传成功，共 ${res.data.total_length} 字`)
+    uploadStep.value = 2
+  } catch (error) {
+    ElMessage.error('文件上传失败: ' + (error.message || '未知错误'))
+  } finally {
+    uploadLoading.value = false
+  }
+}
+
+async function handleGenerateRegex() {
+  if (!novelUploadData.value.sample_text) {
+    ElMessage.warning('请先上传小说文件')
+    return
+  }
+  
+  uploadLoading.value = true
+  try {
+    const res = await generateChapterRegex(novelUploadData.value.sample_text)
+    regexData.value = res.data
+    ElMessage.success('章节标题正则表达式生成成功')
+  } catch (error) {
+    ElMessage.error('生成正则表达式失败: ' + (error.message || '未知错误'))
+  } finally {
+    uploadLoading.value = false
+  }
+}
+
+async function handleSplitPreview() {
+  if (!regexData.value.regex) {
+    ElMessage.warning('请先生成或输入正则表达式')
+    return
+  }
+  
+  uploadLoading.value = true
+  try {
+    const res = await splitChaptersPreview({
+      content: novelUploadData.value.content,
+      regex_pattern: regexData.value.regex,
+      novel_name: novelUploadData.value.novel_name,
+      author: novelUploadData.value.author
+    })
+    splitChapters.value = res.data.chapters
+    splitSummary.value = {
+      total: res.data.total,
+      total_words: res.data.total_words
+    }
+    uploadStep.value = 3
+    ElMessage.success(`成功拆分出 ${res.data.total} 个章节`)
+  } catch (error) {
+    ElMessage.error('章节拆分失败: ' + (error.message || '未知错误'))
+  } finally {
+    uploadLoading.value = false
+  }
+}
+
+function handleSelectAll(selected) {
+  splitChapters.value.forEach(ch => {
+    ch.selected = selected
+  })
+}
+
+const selectedChaptersCount = computed(() => {
+  return splitChapters.value.filter(ch => ch.selected).length
+})
+
+async function handleBatchInsert() {
+  const selectedChapters = splitChapters.value.filter(ch => ch.selected)
+  
+  if (selectedChapters.length === 0) {
+    ElMessage.warning('请至少选择一个章节')
+    return
+  }
+  
+  try {
+    await ElMessageBox.confirm(
+      `确定要插入选中的 ${selectedChapters.length} 个章节吗？`,
+      '确认插入',
+      { type: 'info' }
+    )
+    
+    uploadLoading.value = true
+    const res = await batchInsertChapters(selectedChapters)
+    ElMessage.success(res.message)
+    uploadDialogVisible.value = false
+    loadChapters()
+    loadMeta() // 刷新小说名列表
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('批量插入失败: ' + (error.message || '未知错误'))
+    }
+  } finally {
+    uploadLoading.value = false
+  }
+}
+
 async function handleSubmit() {
   if (!formData.value.title || !formData.value.content) {
     ElMessage.warning('请填写标题和内容')
@@ -98,6 +262,7 @@ async function handleSubmit() {
     ElMessage.success('章节添加成功')
     dialogVisible.value = false
     loadChapters()
+    loadMeta()
   } catch (error) {
     console.error('添加章节失败:', error)
   }
@@ -111,6 +276,7 @@ async function handleDelete(row) {
     await deleteChapter(row.id)
     ElMessage.success('删除成功')
     loadChapters()
+    loadMeta()
   } catch (error) {
     if (error !== 'cancel') {
       console.error('删除失败:', error)
@@ -169,17 +335,39 @@ onMounted(() => {
 
     <el-card class="filter-card">
       <div class="filter-row">
-        <el-select v-model="filterStatus" placeholder="状态筛选" @change="handleFilterChange">
-          <el-option
-            v-for="item in statusOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </el-select>
-        <el-button type="primary" :icon="Plus" @click="openAddDialog">
-          添加章节
-        </el-button>
+        <div class="filter-left">
+          <el-select v-model="filterStatus" placeholder="状态筛选" @change="handleFilterChange" clearable>
+            <el-option
+              v-for="item in statusOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+          <el-select 
+            v-model="filterNovelName" 
+            placeholder="小说名筛选" 
+            @change="handleFilterChange"
+            clearable
+            filterable
+            style="margin-left: 10px; width: 200px;"
+          >
+            <el-option
+              v-for="name in novelNames"
+              :key="name"
+              :label="name"
+              :value="name"
+            />
+          </el-select>
+        </div>
+        <div class="filter-right">
+          <el-button type="success" :icon="Upload" @click="openUploadDialog">
+            上传小说
+          </el-button>
+          <el-button type="primary" :icon="Plus" @click="openAddDialog">
+            添加章节
+          </el-button>
+        </div>
       </div>
     </el-card>
 
@@ -279,6 +467,153 @@ onMounted(() => {
         <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 上传小说对话框 -->
+    <el-dialog 
+      v-model="uploadDialogVisible" 
+      title="上传整本小说" 
+      width="900px"
+      :close-on-click-modal="false"
+    >
+      <el-steps :active="uploadStep - 1" finish-status="success" style="margin-bottom: 30px;">
+        <el-step title="上传文件" />
+        <el-step title="生成正则" />
+        <el-step title="预览章节" />
+      </el-steps>
+
+      <div v-loading="uploadLoading">
+        <!-- 步骤1: 上传文件 -->
+        <div v-if="uploadStep === 1">
+          <el-form label-width="100px">
+            <el-form-item label="小说名称" required>
+              <el-input v-model="novelUploadData.novel_name" placeholder="请输入小说名称" />
+            </el-form-item>
+            <el-form-item label="作者">
+              <el-input v-model="novelUploadData.author" placeholder="可选，填写作者名" />
+            </el-form-item>
+            <el-form-item label="小说文件" required>
+              <el-upload
+                class="upload-area"
+                drag
+                :auto-upload="false"
+                :on-change="handleFileUpload"
+                accept=".txt"
+                :show-file-list="false"
+              >
+                <el-icon class="el-icon--upload"><Upload /></el-icon>
+                <div class="el-upload__text">
+                  将 TXT 文件拖到此处，或<em>点击上传</em>
+                </div>
+                <template #tip>
+                  <div class="el-upload__tip">
+                    仅支持 .txt 格式文件，最大 50MB
+                  </div>
+                </template>
+              </el-upload>
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <!-- 步骤2: 生成正则 -->
+        <div v-if="uploadStep === 2">
+          <el-alert 
+            title="文件上传成功" 
+            :description="`共 ${novelUploadData.total_length} 字，已提取前 5000 字用于分析章节标题格式`"
+            type="success" 
+            style="margin-bottom: 20px;"
+            :closable="false"
+          />
+          
+          <el-form label-width="120px">
+            <el-form-item label="示例文本预览">
+              <el-input
+                v-model="novelUploadData.sample_text"
+                type="textarea"
+                :rows="8"
+                readonly
+              />
+            </el-form-item>
+            
+            <el-form-item>
+              <el-button type="primary" @click="handleGenerateRegex" :loading="uploadLoading">
+                <el-icon><Search /></el-icon>
+                AI 生成章节正则
+              </el-button>
+            </el-form-item>
+            
+            <el-form-item label="正则表达式" v-if="regexData.regex">
+              <el-input v-model="regexData.regex" placeholder="章节标题匹配正则表达式" />
+            </el-form-item>
+            
+            <el-form-item label="说明" v-if="regexData.description">
+              <span>{{ regexData.description }}</span>
+            </el-form-item>
+            
+            <el-form-item label="匹配示例" v-if="regexData.examples?.length">
+              <el-tag v-for="(example, index) in regexData.examples" :key="index" style="margin-right: 8px;">
+                {{ example }}
+              </el-tag>
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <!-- 步骤3: 预览章节 -->
+        <div v-if="uploadStep === 3">
+          <el-alert 
+            :title="`共拆分出 ${splitSummary.total} 个章节，总计 ${splitSummary.total_words} 字`"
+            type="info" 
+            style="margin-bottom: 20px;"
+            :closable="false"
+          >
+            <template #default>
+              <div style="margin-top: 10px;">
+                <el-checkbox 
+                  :model-value="selectedChaptersCount === splitChapters.length"
+                  :indeterminate="selectedChaptersCount > 0 && selectedChaptersCount < splitChapters.length"
+                  @change="handleSelectAll"
+                >
+                  全选 (已选 {{ selectedChaptersCount }} / {{ splitChapters.length }})
+                </el-checkbox>
+              </div>
+            </template>
+          </el-alert>
+          
+          <el-table :data="splitChapters" height="400" stripe>
+            <el-table-column width="60">
+              <template #default="{ row }">
+                <el-checkbox v-model="row.selected" />
+              </template>
+            </el-table-column>
+            <el-table-column prop="index" label="序号" width="70">
+              <template #default="{ row }">
+                {{ row.index + 1 }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="title" label="章节标题" min-width="200" />
+            <el-table-column prop="word_count" label="字数" width="100" />
+            <el-table-column label="内容预览" min-width="300">
+              <template #default="{ row }">
+                <el-tooltip :content="row.content.substring(0, 200) + '...'" placement="top">
+                  <span class="content-preview">{{ row.content.substring(0, 50) }}...</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="uploadDialogVisible = false">取消</el-button>
+        <el-button v-if="uploadStep === 2" @click="uploadStep = 1">上一步</el-button>
+        <el-button v-if="uploadStep === 2 && regexData.regex" type="primary" @click="handleSplitPreview">
+          预览章节拆分
+        </el-button>
+        <el-button v-if="uploadStep === 3" @click="uploadStep = 2">上一步</el-button>
+        <el-button v-if="uploadStep === 3" type="primary" @click="handleBatchInsert" :disabled="selectedChaptersCount === 0">
+          插入选中章节 ({{ selectedChaptersCount }})
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -311,6 +646,16 @@ onMounted(() => {
   align-items: center;
 }
 
+.filter-left {
+  display: flex;
+  align-items: center;
+}
+
+.filter-right {
+  display: flex;
+  gap: 10px;
+}
+
 .table-card {
   min-height: 400px;
 }
@@ -324,5 +669,18 @@ onMounted(() => {
   margin-top: 8px;
   color: #909399;
   font-size: 12px;
+}
+
+.upload-area {
+  width: 100%;
+}
+
+.upload-area :deep(.el-upload-dragger) {
+  width: 100%;
+}
+
+.content-preview {
+  color: #606266;
+  font-size: 13px;
 }
 </style>

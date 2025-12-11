@@ -10,6 +10,11 @@ export function getWritingStyles() {
   return request.get('/chapters/writing-styles')
 }
 
+// 获取所有小说名列表
+export function getNovelNames() {
+  return request.get('/chapters/novel-names')
+}
+
 // 获取章节列表
 export function getChapters(params) {
   return request.get('/chapters', { params })
@@ -38,6 +43,30 @@ export function deleteChapter(id) {
 // AI分析章节
 export function analyzeChapter(id) {
   return request.post(`/chapters/${id}/analyze`)
+}
+
+// 上传小说文件
+export function uploadNovel(formData) {
+  return request.post('/chapters/upload-novel', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+}
+
+// AI生成章节标题正则表达式
+export function generateChapterRegex(sampleText) {
+  return request.post('/chapters/generate-chapter-regex', { sample_text: sampleText })
+}
+
+// 拆分章节预览
+export function splitChaptersPreview(data) {
+  return request.post('/chapters/split-chapters-preview', data)
+}
+
+// 批量插入章节
+export function batchInsertChapters(chapters) {
+  return request.post('/chapters/batch-insert', { chapters })
 }
 
 // 获取片段列表

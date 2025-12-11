@@ -39,6 +39,8 @@ https://github.com/jkxiongxin/ai-novel-train/releases/tag/v1.0.4-alpha
 - [ ] latest.yml 文件中的 URL 指向正确的 EXE 文件
 - [ ] 所有文件名与 yml 文件中的引用完全匹配
 
+⚠️ 注意：发布时请确保 `desktop/package.json` 的 `version` 字段不包含 `v` 前缀（使用 `1.0.4-alpha` 而不是 `v1.0.4-alpha`），否则自动更新将无法正确识别和下载更新包。
+
 ## 发布完成确认清单
 
 - [ ] 所有 5 个文件已上传

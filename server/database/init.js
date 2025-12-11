@@ -71,7 +71,8 @@ async function initDatabase() {
     { key: 'dictionary_search', name: '词典查词', description: 'AI 搜索相关词汇' },
     { key: 'dictionary_generate', name: '词典生成', description: 'AI 生成专题词典' },
     { key: 'chapter_analyze', name: '章节分析', description: 'AI 分析章节内容，拆分片段并识别文风' },
-    { key: 'word_practice_grade', name: '趣味练习评分', description: 'AI 评分造句题答案并提供反馈' }
+    { key: 'word_practice_grade', name: '趣味练习评分', description: 'AI 评分造句题答案并提供反馈' },
+    { key: 'chapter_regex_generate', name: '章节正则生成', description: 'AI 分析小说文本生成章节标题正则表达式' }
   ];
 
   const insertFeature = db.prepare(`

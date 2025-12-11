@@ -306,16 +306,10 @@ function scrollToCurrentPosition() {
       }
     }
     
-    // 滚动输入区域 - 让光标位置显示在中间
+    // 滚动输入区域 - 自动滚动到底部
     const textarea = document.getElementById('typing-input')
     if (textarea) {
-      const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 36
-      const textBeforeCursor = typedText.value
-      const lines = textBeforeCursor.split('\n').length
-      const containerHeight = textarea.clientHeight
-      const cursorTop = lines * lineHeight
-      const scrollTarget = cursorTop - containerHeight / 2
-      textarea.scrollTo({ top: Math.max(0, scrollTarget), behavior: 'smooth' })
+      textarea.scrollTo({ top: textarea.scrollHeight, behavior: 'smooth' })
     }
   })
 }
@@ -357,7 +351,18 @@ function getWritingStyleName(style) {
   return writingStyles.value[style]?.name || style || '-'
 }
 
-function goBack() {
+async function goBack() {
+  // 如果正在进行中，先保存进度
+  if (isStarted.value && !isCompleted.value) {
+    try {
+      await saveTypingProgress(practice.value.id, {
+        typed_content: typedText.value,
+        time_spent: elapsedTime.value
+      })
+    } catch (error) {
+      console.error('保存进度失败:', error)
+    }
+  }
   router.push('/typing')
 }
 

@@ -12,7 +12,7 @@ import {
   createCustomTyping,
   createFromChapter
 } from '../../api/typing'
-import { getSegmentTypes, getWritingStyles, getSegments, getChapters } from '../../api/chapters'
+import { getSegmentTypes, getWritingStyles, getSegments, getChapters, getNovelNames } from '../../api/chapters'
 
 const router = useRouter()
 const loading = ref(false)
@@ -66,6 +66,8 @@ const chapterLoading = ref(false)
 const chapterList = ref([])
 const chapterTotal = ref(0)
 const chapterPage = ref(1)
+const chapterNovelFilter = ref('')
+const novelNames = ref([])
 
 const statusOptions = [
   { value: '', label: '全部状态' },
@@ -117,6 +119,13 @@ async function loadMeta() {
     ])
     segmentTypes.value = typesRes.data
     writingStyles.value = stylesRes.data
+    // 获取小说名列表
+    try {
+      const novelsRes = await getNovelNames()
+      novelNames.value = novelsRes.data
+    } catch (e) {
+      console.warn('加载小说名失败:', e)
+    }
   } catch (error) {
     console.error('加载元数据失败:', error)
   }
@@ -238,6 +247,9 @@ async function handleCustomSubmit() {
 async function openChapterDialog() {
   chapterDialogVisible.value = true
   chapterPage.value = 1
+  // 加载小说名等元数据
+  await loadMeta()
+  chapterNovelFilter.value = ''
   await loadChapters()
 }
 
@@ -246,7 +258,8 @@ async function loadChapters() {
   try {
     const res = await getChapters({
       page: chapterPage.value,
-      pageSize: 20
+      pageSize: 20,
+      novel_name: chapterNovelFilter.value || undefined
     })
     chapterList.value = res.data.list
     chapterTotal.value = res.data.total
@@ -255,6 +268,17 @@ async function loadChapters() {
   } finally {
     chapterLoading.value = false
   }
+}
+
+function clearChapterFilter() {
+  chapterNovelFilter.value = ''
+  chapterPage.value = 1
+  loadChapters()
+}
+
+function handleChapterFilterChange() {
+  chapterPage.value = 1
+  loadChapters()
 }
 
 async function handleSelectChapter(chapter) {
@@ -588,6 +612,23 @@ onMounted(() => {
     <!-- 章节选择对话框（整章抄写） -->
     <el-dialog v-model="chapterDialogVisible" title="选择章节（整章抄写）" width="800px">
       <div class="chapter-list" v-loading="chapterLoading">
+        <div class="chapter-filters" style="display:flex;gap:12px;margin-bottom:12px;align-items:center;">
+          <el-select
+            v-model="chapterNovelFilter"
+            placeholder="筛选小说名"
+            clearable
+            @change="handleChapterFilterChange"
+            style="min-width:240px;"
+          >
+            <el-option
+              v-for="name in novelNames"
+              :key="name"
+              :label="name"
+              :value="name"
+            />
+          </el-select>
+          <el-button size="small" @click="clearChapterFilter">清除</el-button>
+        </div>
         <div
           v-for="chapter in chapterList"
           :key="chapter.id"

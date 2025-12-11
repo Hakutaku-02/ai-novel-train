@@ -5,7 +5,7 @@
  */
 
 const { autoUpdater } = require('electron-updater');
-const { dialog, BrowserWindow, ipcMain, shell } = require('electron');
+const { dialog, BrowserWindow, ipcMain, shell, app } = require('electron');
 const log = require('electron-log');
 
 // 配置日志
@@ -19,6 +19,7 @@ let downloadProgress = 0;
 let updateInfo = null;
 let isDownloading = false;
 let progressDialog = null;
+let autoInstallOnDownload = false; // 是否在下载完成后自动安装
 
 /**
  * 初始化自动更新
@@ -92,6 +93,18 @@ function initAutoUpdater(mainWindow) {
     
     sendStatusToWindow(mainWindow, 'downloaded', info);
     
+    // 如果配置了自动安装，直接退出并安装
+    if (autoInstallOnDownload || process.env.AUTO_INSTALL_ON_DOWNLOAD === 'true') {
+      try {
+        log.info('自动安装配置已启用，准备退出并安装更新');
+        sendStatusToWindow(mainWindow, 'installing', info);
+        autoUpdater.quitAndInstall(false, true);
+        return;
+      } catch (err) {
+        log.error('自动安装失败：', err);
+      }
+    }
+
     // 提示用户重启安装
     showInstallDialog(mainWindow, info);
   });
@@ -206,9 +219,12 @@ function startDownload(mainWindow) {
   });
   
   // 开始下载
-  autoUpdater.downloadUpdate().catch((error) => {
+  autoUpdater.downloadUpdate().then(() => {
+    log.info('downloadUpdate called, download should start');
+  }).catch((error) => {
     log.error('下载更新失败:', error);
     isDownloading = false;
+    sendStatusToWindow(mainWindow, 'error', { message: error.message, stack: error.stack });
     showUpdateErrorDialog(mainWindow, error);
   });
   
@@ -221,14 +237,26 @@ function startDownload(mainWindow) {
 function showUpdateErrorDialog(mainWindow, error) {
   const errorMessage = error.message || '未知错误';
   
+  // 尝试定位日志文件（如果 electron-log 可用）
+  let logFilePath = '';
+  try {
+    const lf = log.transports?.file?.getFile?.() || log.transports?.file?.file || null;
+    if (lf && typeof lf === 'object' && lf.path) {
+      logFilePath = lf.path;
+    } else if (typeof lf === 'string') {
+      logFilePath = lf;
+    }
+  } catch (e) { /* ignore */ }
+
+  const buttons = ['前往下载页面', '稍后再试', '打开日志', '关闭'];
   dialog.showMessageBox(mainWindow, {
     type: 'error',
     title: '更新失败',
     message: '自动更新下载失败',
     detail: `错误信息: ${errorMessage}\n\n您可以前往 GitHub 手动下载最新版本。`,
-    buttons: ['前往下载页面', '稍后再试', '关闭'],
+    buttons,
     defaultId: 0,
-    cancelId: 2
+    cancelId: 3
   }).then(({ response }) => {
     if (response === 0) {
       openReleasePage();
@@ -237,6 +265,9 @@ function showUpdateErrorDialog(mainWindow, error) {
       setTimeout(() => {
         checkForUpdates(false);
       }, 60000); // 1分钟后重试
+    } else if (response === 2 && logFilePath) {
+      // 打开日志文件
+      shell.openPath(logFilePath);
     }
   });
 }
@@ -282,6 +313,16 @@ function sendStatusToWindow(mainWindow, status, data = {}) {
  * 注册 IPC 事件处理
  */
 function registerIPCHandlers(mainWindow) {
+  // 移除旧 handler（防止重复注册）
+  try { ipcMain.removeHandler('check-for-updates') } catch(e) {}
+  try { ipcMain.removeHandler('download-update') } catch(e) {}
+  try { ipcMain.removeHandler('set-auto-install-on-download') } catch(e) {}
+  try { ipcMain.removeHandler('install-update') } catch(e) {}
+  try { ipcMain.removeHandler('get-app-version') } catch(e) {}
+  try { ipcMain.removeHandler('get-update-status') } catch(e) {}
+  try { ipcMain.removeHandler('get-auto-install-status') } catch(e) {}
+  try { ipcMain.removeHandler('open-release-page') } catch(e) {}
+
   // 手动检查更新
   ipcMain.handle('check-for-updates', async () => {
     return await checkForUpdates(true);
@@ -294,6 +335,12 @@ function registerIPCHandlers(mainWindow) {
       return true;
     }
     return false;
+  });
+
+  // 设置下载完成后是否自动安装
+  ipcMain.handle('set-auto-install-on-download', (event, value) => {
+    autoInstallOnDownload = !!value;
+    return autoInstallOnDownload;
   });
 
   // 安装更新并重启
@@ -317,9 +364,16 @@ function registerIPCHandlers(mainWindow) {
       updateDownloaded,
       downloadProgress,
       updateInfo,
-      isDownloading
+      isDownloading,
+      autoInstallOnDownload
     };
   });
+  // ipc handler to return autoInstallOnDownload state
+  ipcMain.handle('get-auto-install-status', () => {
+    return {
+      autoInstallOnDownload
+    }
+  })
   
   // 打开发布页面
   ipcMain.handle('open-release-page', () => {

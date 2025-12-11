@@ -11,7 +11,8 @@ const AI_FEATURES = {
   DICTIONARY_SEARCH: 'dictionary_search',    // 词典查词
   DICTIONARY_GENERATE: 'dictionary_generate', // 词典生成
   CHAPTER_ANALYZE: 'chapter_analyze',        // 章节分析
-  WORD_PRACTICE_GRADE: 'word_practice_grade' // 趣味练习评分
+  WORD_PRACTICE_GRADE: 'word_practice_grade', // 趣味练习评分
+  CHAPTER_REGEX_GENERATE: 'chapter_regex_generate' // 章节标题正则生成
 };
 
 // 解密 API Key
@@ -317,6 +318,82 @@ async function analyzeChapter(content) {
   }
 }
 
+// 生成章节标题正则表达式
+async function generateChapterRegex(sampleText) {
+  const config = getConfigForFeature(AI_FEATURES.CHAPTER_REGEX_GENERATE);
+  
+  const systemPrompt = `你是一位专业的文本分析专家，擅长分析小说章节结构。
+请根据提供的小说文本样本，分析出章节标题的格式规律，并生成一个精确的JavaScript正则表达式来匹配章节标题。
+
+常见的章节标题格式包括：
+1. "第X章 标题" 格式（如：第一章 初见、第1章 开始）
+2. "第X回 标题" 格式（如：第一回 风起云涌）
+3. "Chapter X" 格式
+4. "卷X 章X" 格式
+5. 纯数字章节（如：1、2、3 或 001、002）
+6. 其他特殊格式
+
+请仔细分析文本中的章节标题模式，生成能准确匹配的正则表达式。
+
+返回JSON格式：
+{
+  "regex": "正则表达式字符串（不要包含斜杠和标志）",
+  "description": "对正则表达式的简要说明",
+  "examples": ["匹配的示例标题1", "匹配的示例标题2", "匹配的示例标题3"]
+}
+
+注意：
+1. 正则表达式应该能匹配完整的章节标题行
+2. 不要过于宽泛，以免匹配到正文内容
+3. 使用JavaScript正则表达式语法
+4. 返回的regex字段只包含正则表达式本身，不需要斜杠包裹`;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: `请分析以下小说文本样本，生成章节标题的正则表达式：\n\n${sampleText}` }
+  ];
+
+  const result = await callAI({
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model,
+    messages,
+    maxTokens: config.maxTokens || 2048,
+    temperature: 0.3,
+    timeout: config.timeout || 60000
+  });
+
+  // 解析返回的JSON
+  try {
+    let jsonContent = result.content;
+    
+    // 如果内容被包裹在markdown代码块中，提取JSON
+    const jsonMatch = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      jsonContent = jsonMatch[1];
+    }
+    
+    const regexResult = JSON.parse(jsonContent.trim());
+    
+    if (!regexResult.regex) {
+      throw new Error('未能生成正则表达式');
+    }
+    
+    // 验证正则表达式是否有效
+    try {
+      new RegExp(regexResult.regex);
+    } catch (e) {
+      throw new Error('生成的正则表达式无效: ' + e.message);
+    }
+    
+    return regexResult;
+  } catch (parseError) {
+    console.error('解析AI返回结果失败:', parseError);
+    console.error('原始内容:', result.content);
+    throw new Error('正则表达式生成失败，请重试');
+  }
+}
+
 module.exports = {
   AI_FEATURES,
   callAI,
@@ -325,5 +402,6 @@ module.exports = {
   getModelList,
   getActiveConfig,
   getConfigForFeature,
-  analyzeChapter
+  analyzeChapter,
+  generateChapterRegex
 };
