@@ -11,6 +11,11 @@ const {
 } = require('./inkTaskService');
 const { getDatabase } = require('../database/init');
 
+const MS_5_MIN = 5 * 60 * 1000;
+const MS_60_MIN = 60 * 60 * 1000;
+const MAX_TASKS_PER_DAY = 20;
+const MAX_TASKS_PER_DAY_FAILSAFE = 200;
+
 let schedulerStarted = false;
 let taskGenerationInterval = null;
 
@@ -45,7 +50,7 @@ function startScheduler() {
   // 每5分钟检查是否需要生成AI任务变体
   taskGenerationInterval = setInterval(async () => {
     await checkAndGenerateAITasks();
-  }, 5 * 60 * 1000); // 5分钟
+  }, MS_5_MIN); // 5分钟
   
   // 每天凌晨0点清理过期数据
   cron.schedule('0 0 * * *', () => {
@@ -106,20 +111,40 @@ function ensureTodayTasks() {
 async function checkAndGenerateAITasks() {
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
-  
-  // 检查今日AI生成的任务数量
-  const aiTaskCount = db.prepare(`
+
+  // 今日总任务数（包含预设 + AI）
+  const todayTotalCount = db.prepare(`
     SELECT COUNT(*) as count FROM mojing_daily_tasks 
-    WHERE task_date = ? AND source = 'ai_generated'
+    WHERE task_date = ?
   `).get(today).count;
-  
-  // 每天最多生成10个AI任务
-  const maxAITasks = 10;
-  
-  if (aiTaskCount >= maxAITasks) {
+
+  // 如果今天已有任务但还没有预设任务，补齐一次预设任务（避免先生成AI导致任务数偏少）
+  const todayPresetCount = db.prepare(`
+    SELECT COUNT(*) as count FROM mojing_daily_tasks
+    WHERE task_date = ? AND source = 'preset'
+  `).get(today).count;
+
+  if (todayTotalCount > 0 && todayPresetCount === 0) {
+    try {
+      const presetResult = generateDailyTasksFromTemplates();
+      if (presetResult?.generated > 0) {
+        console.log('[调度] 检测到缺少预设任务，已补齐:', presetResult);
+      }
+    } catch (error) {
+      console.error('[调度] 补齐预设任务失败:', error);
+    }
+  }
+
+  // 每日上限：达到20个后不再生成新任务
+  if (todayTotalCount >= MAX_TASKS_PER_DAY) {
     return;
   }
-  
+
+  // 兜底：防止异常循环导致任务无限暴涨
+  if (todayTotalCount >= MAX_TASKS_PER_DAY_FAILSAFE) {
+    return;
+  }
+
   // 检查是否有AI配置
   const hasAIConfig = db.prepare(`
     SELECT COUNT(*) as count FROM ai_config WHERE is_active = 1 OR is_default = 1
@@ -129,38 +154,117 @@ async function checkAndGenerateAITasks() {
     return;
   }
   
-  // 检查AI功能是否配置
-  const hasMojingFeature = db.prepare(`
-    SELECT COUNT(*) as count FROM ai_feature_config 
-    WHERE feature_key = 'mojing_task_generate' AND config_id IS NOT NULL
-  `).get().count > 0;
-  
-  // 如果没有专门配置墨境功能，使用默认配置也可以
-  
-  console.log('[调度] 开始生成AI任务变体...');
-  
-  try {
-    // 交替生成墨点和墨线任务
-    const inkdotCount = db.prepare(`
-      SELECT COUNT(*) as count FROM mojing_daily_tasks 
-      WHERE task_date = ? AND task_type = 'inkdot' AND source = 'ai_generated'
-    `).get(today).count;
-    
-    const inklineCount = db.prepare(`
-      SELECT COUNT(*) as count FROM mojing_daily_tasks 
-      WHERE task_date = ? AND task_type = 'inkline' AND source = 'ai_generated'
-    `).get(today).count;
-    
-    // 优先生成数量较少的类型
-    if (inkdotCount <= inklineCount && inkdotCount < 6) {
-      await generateAITaskVariants('inkdot', 2);
-    } else if (inklineCount < 4) {
-      await generateAITaskVariants('inkline', 1);
+
+  // 当天没有生成任何任务：一次性生成至少10个（优先用预设模板；不足则用AI补齐）
+  if (todayTotalCount === 0) {
+    console.log('[调度] 今日任务为空：开始生成至少10个任务...');
+    try {
+      const presetResult = generateDailyTasksFromTemplates();
+      console.log('[调度] 预设任务生成完成:', presetResult);
+      // 确保每日挑战存在
+      getDailyChallenge();
+    } catch (error) {
+      console.error('[调度] 预设任务生成失败:', error);
     }
-    
+
+    const afterPresetCount = db.prepare(`
+      SELECT COUNT(*) as count FROM mojing_daily_tasks 
+      WHERE task_date = ?
+    `).get(today).count;
+
+    const remainingSlots = Math.max(0, MAX_TASKS_PER_DAY - afterPresetCount);
+    const needAI = Math.min(remainingSlots, Math.max(0, 10 - afterPresetCount));
+    if (needAI > 0 && hasAIConfig) {
+      try {
+        const focusAttrTypes = getLeastCoveredAttrTypes(db, today, 6);
+        await generateAITaskVariants('inkdot', needAI, { focusAttrTypes });
+      } catch (error) {
+        console.error('[调度] AI补齐任务失败:', error);
+      }
+    }
+
+    return;
+  }
+
+  // 如果一个小时内没有生成新任务：生成2个新任务，确保“做不完”
+  const lastTaskCreatedAt = db.prepare(`
+    SELECT created_at FROM mojing_daily_tasks 
+    WHERE task_date = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT 1
+  `).get(today)?.created_at;
+
+  if (!lastTaskCreatedAt) {
+    return;
+  }
+
+  const lastCreatedMs = new Date(lastTaskCreatedAt).getTime();
+  if (!Number.isFinite(lastCreatedMs)) {
+    return;
+  }
+
+  const nowMs = Date.now();
+  if (nowMs - lastCreatedMs < MS_60_MIN) {
+    return;
+  }
+
+  if (!hasAIConfig) {
+    return;
+  }
+
+  console.log('[调度] 超过1小时无新任务：生成2个AI任务...');
+
+  try {
+    const currentCount = db.prepare(`
+      SELECT COUNT(*) as count FROM mojing_daily_tasks WHERE task_date = ?
+    `).get(today).count;
+    const generateCount = Math.min(2, Math.max(0, MAX_TASKS_PER_DAY - currentCount));
+    if (generateCount <= 0) {
+      return;
+    }
+    const focusAttrTypes = getLeastCoveredAttrTypes(db, today, 2);
+    const taskType = pickTaskTypeForBackfill(db, today);
+    await generateAITaskVariants(taskType, generateCount, { focusAttrTypes });
   } catch (error) {
     console.error('[调度] AI任务生成失败:', error);
   }
+}
+
+function getLeastCoveredAttrTypes(db, taskDate, pickCount) {
+  const allAttrTypes = ['character', 'conflict', 'scene', 'dialogue', 'rhythm', 'style'];
+
+  const rows = db.prepare(`
+    SELECT attr_type, COUNT(*) as count
+    FROM mojing_daily_tasks
+    WHERE task_date = ?
+    GROUP BY attr_type
+  `).all(taskDate);
+
+  const counts = new Map(rows.map(r => [r.attr_type, r.count]));
+
+  const sorted = allAttrTypes
+    .map(attr => ({ attr, count: counts.get(attr) || 0 }))
+    .sort((a, b) => a.count - b.count || a.attr.localeCompare(b.attr));
+
+  return sorted.slice(0, Math.max(1, pickCount)).map(x => x.attr);
+}
+
+function pickTaskTypeForBackfill(db, taskDate) {
+  const rows = db.prepare(`
+    SELECT task_type, COUNT(*) as count
+    FROM mojing_daily_tasks
+    WHERE task_date = ?
+    GROUP BY task_type
+  `).all(taskDate);
+
+  const counts = new Map(rows.map(r => [r.task_type, r.count]));
+  const inkdot = counts.get('inkdot') || 0;
+  const inkline = counts.get('inkline') || 0;
+
+  // 让墨点略多（更轻量），同时避免墨线长期缺失
+  if (inkline === 0) return 'inkline';
+  if (inkdot <= inkline) return 'inkdot';
+  return 'inkline';
 }
 
 /**

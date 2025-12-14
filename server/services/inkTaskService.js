@@ -23,6 +23,59 @@ function generateContentHash(content) {
   return crypto.createHash('md5').update(content).digest('hex').substring(0, 16);
 }
 
+const ALL_ATTR_TYPES = ['character', 'conflict', 'scene', 'dialogue', 'rhythm', 'style'];
+
+const ALL_PROMPT_KINDS = ['normal', 'polish', 'continue'];
+
+function rollPromptKind() {
+  // 掷骰子（1-6）：1-2=normal，3-4=polish，5-6=continue
+  const roll = Math.floor(Math.random() * 6) + 1;
+  if (roll <= 2) return 'normal';
+  if (roll <= 4) return 'polish';
+  return 'continue';
+}
+
+function formatTaskByPromptKind(promptKind, baseTitle, baseDescription, wordLimitText) {
+  const kind = ALL_PROMPT_KINDS.includes(promptKind) ? promptKind : 'normal';
+  if (kind === 'polish') {
+    const title = String(baseTitle || '').startsWith('【润色】') ? baseTitle : `【润色】${baseTitle}`;
+    const description = `润色任务：根据以下“干逻辑主线”写成一段${wordLimitText}的流畅文本。\n逻辑主线：\n- ${String(baseTitle || '').trim()}\n- ${String(baseDescription || '').trim()}\n要求：不新增关键事件，只提升文笔、节奏与细节。`;
+    return { title, description };
+  }
+  if (kind === 'continue') {
+    const title = String(baseTitle || '').startsWith('【续写】') ? baseTitle : `【续写】${baseTitle}`;
+    const raw = `${String(baseTitle || '').trim()}。${String(baseDescription || '').trim()}`.replace(/\s+/g, ' ').trim();
+    const starter = raw.length > 140 ? `${raw.slice(0, 140)}…` : raw;
+    const description = `续写任务：阅读以下起始内容，续写一段${wordLimitText}的文本。\n起始内容：${starter}\n要求：保持人称与时态一致，补充细节并推进一个变化。`;
+    return { title, description };
+  }
+  return { title: baseTitle, description: baseDescription };
+}
+
+// 用于制造差异、避免AI任务重复的“随机约束词”
+const CONSTRAINT_WORD_POOL = [
+  '纸鸢', '月蚀', '苔藓', '回声', '玻璃', '铁锈', '旧伞', '潮汐', '雾灯', '落款',
+  '风铃', '旧邮票', '车站', '井盖', '指纹', '裂缝', '微光', '余温', '钟摆', '雨痕',
+  '霜花', '幕布', '暗门', '钥匙', '信封', '折页', '火柴', '海盐', '烛芯', '砂砾',
+  '栈桥', '倒影', '风向', '棉线', '纸屑', '墨渍', '留白', '旧照', '回廊', '蜡封',
+  '木屑', '药香', '檐雨', '纸灯', '雪粒', '铜铃', '潮声', '青苔', '渡口', '手札',
+  '剪影', '浪花', '夜航', '听诊器', '合页', '发条', '边角料', '松针', '残页', '热气'
+];
+
+function pickUniqueConstraintWords(count) {
+  const pool = [...CONSTRAINT_WORD_POOL];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+
+  const selected = pool.slice(0, Math.max(0, count));
+  while (selected.length < count) {
+    selected.push(crypto.randomBytes(2).toString('hex'));
+  }
+  return selected;
+}
+
 /**
  * 获取今日任务池
  * @param {string} taskType - 任务类型 (inkdot/inkline/all)
@@ -72,45 +125,65 @@ function generateDailyTasksFromTemplates() {
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
   
-  // 检查今天是否已生成
-  const existingCount = db.prepare(`
+  // 只要“预设任务”还没生成，就允许补齐预设任务（避免先生成AI导致永远只有少量任务）
+  const existingPresetCount = db.prepare(`
+    SELECT COUNT(*) as count FROM mojing_daily_tasks WHERE task_date = ? AND source = 'preset'
+  `).get(today).count;
+  
+  const existingTotalCount = db.prepare(`
     SELECT COUNT(*) as count FROM mojing_daily_tasks WHERE task_date = ?
   `).get(today).count;
   
-  if (existingCount > 0) {
-    console.log(`今日(${today})任务已存在 ${existingCount} 条，跳过预设任务生成`);
-    return { generated: 0, total: existingCount };
+  if (existingPresetCount > 0) {
+    console.log(`今日(${today})预设任务已存在 ${existingPresetCount} 条，跳过预设任务生成`);
+    return { generated: 0, total: existingTotalCount, preset: existingPresetCount };
   }
+
+  // 每日上限：最多20个任务（包含预设 + AI）
+  const MAX_TASKS_PER_DAY = 20;
+  const remainingSlots = Math.max(0, MAX_TASKS_PER_DAY - existingTotalCount);
+  if (remainingSlots <= 0) {
+    return { generated: 0, total: existingTotalCount, preset: existingPresetCount };
+  }
+
+  // 优先补墨点（更轻量），其余再补墨线
+  const inkdotLimit = Math.min(10, remainingSlots);
+  const inklineLimit = Math.min(5, Math.max(0, remainingSlots - inkdotLimit));
   
   // 获取活跃的模板，随机选择
   const inkdotTemplates = db.prepare(`
     SELECT * FROM mojing_task_templates 
     WHERE task_type = 'inkdot' AND is_active = 1
-    ORDER BY RANDOM() LIMIT 10
-  `).all();
+    ORDER BY RANDOM() LIMIT ?
+  `).all(inkdotLimit);
   
   const inklineTemplates = db.prepare(`
     SELECT * FROM mojing_task_templates 
     WHERE task_type = 'inkline' AND is_active = 1
-    ORDER BY RANDOM() LIMIT 5
-  `).all();
+    ORDER BY RANDOM() LIMIT ?
+  `).all(inklineLimit);
   
   const insertTask = db.prepare(`
     INSERT INTO mojing_daily_tasks 
     (task_date, template_id, task_type, title, description, requirements, 
-     time_limit, word_limit_min, word_limit_max, attr_type, xp_reward, 
+     prompt_kind, time_limit, word_limit_min, word_limit_max, attr_type, xp_reward, 
      attr_reward, difficulty, source, content_hash, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
-  let sortOrder = 0;
+  const currentMaxOrder = db.prepare(`
+    SELECT MAX(sort_order) as max_order FROM mojing_daily_tasks WHERE task_date = ?
+  `).get(today)?.max_order;
+  let sortOrder = Number.isFinite(currentMaxOrder) ? currentMaxOrder + 1 : 0;
   
   // 生成墨点任务
   for (const template of inkdotTemplates) {
-    const hash = generateContentHash(template.description);
+    const promptKind = template.prompt_kind || rollPromptKind();
+    const formatted = formatTaskByPromptKind(promptKind, template.title, template.description, '50-100字');
+    const hash = generateContentHash(`${formatted.title}::${formatted.description}`);
     insertTask.run(
-      today, template.id, 'inkdot', template.title, template.description,
-      template.requirements, template.time_limit, template.word_limit_min,
+      today, template.id, 'inkdot', formatted.title, formatted.description,
+      template.requirements, promptKind, template.time_limit, template.word_limit_min,
       template.word_limit_max, template.attr_type, template.xp_reward,
       template.attr_reward, template.difficulty, 'preset', hash, sortOrder++
     );
@@ -118,10 +191,12 @@ function generateDailyTasksFromTemplates() {
   
   // 生成墨线任务
   for (const template of inklineTemplates) {
-    const hash = generateContentHash(template.description);
+    const promptKind = template.prompt_kind || rollPromptKind();
+    const formatted = formatTaskByPromptKind(promptKind, template.title, template.description, '200-400字');
+    const hash = generateContentHash(`${formatted.title}::${formatted.description}`);
     insertTask.run(
-      today, template.id, 'inkline', template.title, template.description,
-      template.requirements, template.time_limit, template.word_limit_min,
+      today, template.id, 'inkline', formatted.title, formatted.description,
+      template.requirements, promptKind, template.time_limit, template.word_limit_min,
       template.word_limit_max, template.attr_type, template.xp_reward,
       template.attr_reward, template.difficulty, 'preset', hash, sortOrder++
     );
@@ -141,7 +216,8 @@ function generateDailyTasksFromTemplates() {
   return {
     generated: inkdotTemplates.length + inklineTemplates.length,
     inkdot: inkdotTemplates.length,
-    inkline: inklineTemplates.length
+    inkline: inklineTemplates.length,
+    total: existingTotalCount + inkdotTemplates.length + inklineTemplates.length
   };
 }
 
@@ -150,7 +226,7 @@ function generateDailyTasksFromTemplates() {
  * @param {string} taskType - inkdot 或 inkline
  * @param {number} count - 生成数量
  */
-async function generateAITaskVariants(taskType = 'inkdot', count = 3) {
+async function generateAITaskVariants(taskType = 'inkdot', count = 3, options = {}) {
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
   
@@ -170,6 +246,14 @@ async function generateAITaskVariants(taskType = 'inkdot', count = 3) {
   const taskTypeName = taskType === 'inkdot' ? '墨点' : '墨线';
   const wordLimit = taskType === 'inkdot' ? '50-100字' : '200-400字';
   const timeLimit = taskType === 'inkdot' ? '5分钟' : '20分钟';
+
+  const focusAttrTypes = Array.isArray(options.focusAttrTypes) && options.focusAttrTypes.length > 0
+    ? options.focusAttrTypes.filter(t => ALL_ATTR_TYPES.includes(t))
+    : ALL_ATTR_TYPES;
+
+  const constraintWords = pickUniqueConstraintWords(count);
+  const generationNonce = crypto.randomBytes(4).toString('hex');
+  const promptKinds = Array.from({ length: count }, () => rollPromptKind());
   
   const prompt = `你是一位写作训练专家，请为写作学习者生成${count}个新的"${taskTypeName}任务"。
 
@@ -192,10 +276,21 @@ ${sampleTemplates.map((t, i) => `${i + 1}. 【${t.title}】${t.description} (锻
 请生成${count}个不同的任务，要求：
 1. 题目要具体、可执行
 2. 与参考样例不重复
-3. 覆盖不同的属性类型
+3. 本次需要优先覆盖这些属性类型：${focusAttrTypes.join(', ')}（若数量不足以覆盖全部，请尽量均匀分配）
 4. 有创意，能激发写作兴趣
+5. 为避免重复：每个任务的description必须包含一个不同的【随机约束词】（不可省略、不可重复）：${constraintWords.map(w => `「${w}」`).join('、')}
+6. 为避免相似：不要复用参考样例的标题短语；尽量使用不同场景/不同人物关系/不同叙事角度
+7. 随机种子：${generationNonce}
 
-请以JSON数组格式返回，每个任务包含：title, description, attr_type, difficulty(easy/normal/hard)`;
+题目类型（prompt_kind）由系统掷骰子确定（请严格按指定类型输出）：
+- normal: 常规写作练习题
+- polish: 润色（给出“很干的逻辑主线/要点”，让用户润色成完整文本）
+- continue: 续写（给出一段起始内容，让用户续写）
+
+本次每个任务的类型与约束词如下（必须一一对应）：
+${promptKinds.map((k, i) => `- #${i + 1}: prompt_kind=${k}, 约束词=「${constraintWords[i]}」`).join('\n')}
+
+请以JSON数组格式返回，每个任务包含：title, description, attr_type, difficulty(easy/normal/hard), prompt_kind。注意 attr_type 必须在 [${focusAttrTypes.join(', ')}] 内，prompt_kind 必须与上面的指定一致。`;
 
   try {
     const response = await callAIForFeature(MOJING_FEATURES.TASK_GENERATE, [
@@ -213,9 +308,9 @@ ${sampleTemplates.map((t, i) => `${i + 1}. 【${t.title}】${t.description} (锻
     // 插入任务
     const insertTask = db.prepare(`
       INSERT INTO mojing_daily_tasks 
-      (task_date, task_type, title, description, attr_type, xp_reward, 
+      (task_date, task_type, title, description, prompt_kind, attr_type, xp_reward, 
        attr_reward, difficulty, source, content_hash, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const currentMaxOrder = db.prepare(`
@@ -224,9 +319,31 @@ ${sampleTemplates.map((t, i) => `${i + 1}. 【${t.title}】${t.description} (锻
     
     let generated = 0;
     
-    for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i];
-      const hash = generateContentHash(task.description);
+    const limit = Math.min(tasks.length, count);
+    for (let i = 0; i < limit; i++) {
+      const task = tasks[i] || {};
+      const baseTitle = String(task.title || '').trim();
+      const baseDescription = String(task.description || '').trim();
+
+      if (!baseTitle || !baseDescription) {
+        continue;
+      }
+
+      const promptKind = promptKinds[i] || 'normal';
+      const formatted = formatTaskByPromptKind(promptKind, baseTitle, baseDescription, wordLimit);
+      const title = String(formatted.title || '').trim();
+      let description = String(formatted.description || '').trim();
+
+      const expectedWord = constraintWords[i] || null;
+      if (expectedWord && !description.includes(expectedWord)) {
+        description = `${description}\n\n随机约束词：${expectedWord}`;
+      }
+
+      const normalizedAttr = focusAttrTypes.includes(task.attr_type)
+        ? task.attr_type
+        : focusAttrTypes[Math.floor(Math.random() * focusAttrTypes.length)];
+
+      const hash = generateContentHash(`${title}::${description}`);
       
       // 检查去重
       if (recentHashes.includes(hash)) {
@@ -238,8 +355,9 @@ ${sampleTemplates.map((t, i) => `${i + 1}. 【${t.title}】${t.description} (锻
       const attrReward = taskType === 'inkdot' ? 1 : 2;
       
       insertTask.run(
-        today, taskType, task.title, task.description,
-        task.attr_type || 'character', xpReward, attrReward,
+        today, taskType, title, description,
+        promptKind,
+        normalizedAttr || 'character', xpReward, attrReward,
         task.difficulty || 'normal', 'ai_generated', hash,
         currentMaxOrder + i + 1
       );

@@ -28,9 +28,9 @@ const ATTR_NAMES = {
 
 // XP来源类型配置
 const XP_SOURCE_CONFIG = {
-  inkdot_complete: { base: 10, name: '墨点任务' },
-  inkline_complete: { base: 30, name: '墨线任务' },
-  inkchapter_complete: { base: 150, name: '墨章挑战' },
+  inkdot_complete: { base: 10, name: '墨点任务', wordMultiplier: 0.05 },
+  inkline_complete: { base: 30, name: '墨线任务', wordMultiplier: 0.05 },
+  inkchapter_complete: { base: 150, name: '墨章挑战', wordMultiplier: 0.05 },
   practice_submit: { base: 15, name: '写作练习提交' },
   practice_evaluated: { base: 0, name: '练习评审', scoreMultiplier: 0.25 }, // 根据分数给XP
   skill_practice: { base: 20, name: '技巧练习' },
@@ -81,7 +81,7 @@ function getFullProfile() {
   // 计算当前等级进度
   const currentLevelXp = currentLevelConfig?.required_xp || 0;
   const nextLevelXp = nextLevelConfig?.required_xp || currentLevelXp;
-  const xpInCurrentLevel = profile.total_xp - currentLevelXp;
+  const xpInCurrentLevel = Math.max(0, profile.total_xp - currentLevelXp);
   const xpNeededForNextLevel = nextLevelXp - currentLevelXp;
   const levelProgress = xpNeededForNextLevel > 0 
     ? Math.min(100, Math.floor((xpInCurrentLevel / xpNeededForNextLevel) * 100))

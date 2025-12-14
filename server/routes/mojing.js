@@ -158,7 +158,28 @@ router.get('/achievements/next', (req, res) => {
 router.get('/tasks/today', (req, res) => {
   try {
     const { type = 'all' } = req.query;
-    const tasks = getTodayTasks(type);
+    const MAX_PENDING_PER_TYPE = 3;
+    let tasks = getTodayTasks(type);
+
+    // 只返回“待完成”任务，且限制展示数量（降低选择负担）
+    tasks = (tasks || []).filter(t => !t?.isCompleted);
+
+    if (type === 'all') {
+      const counters = { inkdot: 0, inkline: 0 };
+      tasks = tasks.filter(t => {
+        if (t.task_type === 'inkdot') {
+          counters.inkdot += 1;
+          return counters.inkdot <= MAX_PENDING_PER_TYPE;
+        }
+        if (t.task_type === 'inkline') {
+          counters.inkline += 1;
+          return counters.inkline <= MAX_PENDING_PER_TYPE;
+        }
+        return false;
+      });
+    } else {
+      tasks = tasks.slice(0, MAX_PENDING_PER_TYPE);
+    }
     const challenge = getDailyChallenge();
     const stats = getTaskStats();
     

@@ -227,7 +227,8 @@ router.post('/', (req, res) => {
       temperature = 0.7,
       timeout = 60000,
       is_active = false,
-      is_default = false
+      is_default = false,
+      provider_type = 'openai'
     } = req.body;
 
     // 如果设为激活状态，先取消其他配置的激活状态
@@ -253,9 +254,10 @@ router.post('/', (req, res) => {
           timeout = ?,
           is_active = ?,
           is_default = ?,
+          provider_type = ?,
           updated_at = CURRENT_TIMESTAMP
       `;
-      const params = [config_name, api_base_url, model_name, max_tokens, temperature, timeout, is_active ? 1 : 0, is_default ? 1 : 0];
+      const params = [config_name, api_base_url, model_name, max_tokens, temperature, timeout, is_active ? 1 : 0, is_default ? 1 : 0, provider_type];
       
       // 只有当提供了新的 API Key 时才更新
       if (api_key && api_key !== '********') {
@@ -271,8 +273,8 @@ router.post('/', (req, res) => {
     } else {
       // 创建新配置
       const insertResult = db.prepare(`
-        INSERT INTO ai_config (config_name, api_base_url, api_key, model_name, max_tokens, temperature, timeout, is_active, is_default)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO ai_config (config_name, api_base_url, api_key, model_name, max_tokens, temperature, timeout, is_active, is_default, provider_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         config_name,
         api_base_url,
@@ -282,7 +284,8 @@ router.post('/', (req, res) => {
         temperature,
         timeout,
         is_active ? 1 : 0,
-        is_default ? 1 : 0
+        is_default ? 1 : 0,
+        provider_type
       );
       result = { id: insertResult.lastInsertRowid };
     }
@@ -373,7 +376,7 @@ router.put('/:id/default', (req, res) => {
 // 测试连接
 router.post('/test', async (req, res) => {
   try {
-    const { api_base_url, api_key, model_name, timeout = 30000 } = req.body;
+    const { api_base_url, api_key, model_name, timeout = 30000, provider_type = 'openai' } = req.body;
     
     const response = await callAI({
       baseUrl: api_base_url,
@@ -381,7 +384,8 @@ router.post('/test', async (req, res) => {
       model: model_name,
       messages: [{ role: 'user', content: '请回复"连接成功"' }],
       maxTokens: 50,
-      timeout
+      timeout,
+      providerType: provider_type
     });
 
     res.json({

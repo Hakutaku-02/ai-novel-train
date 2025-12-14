@@ -438,6 +438,7 @@ const migrations = [
           code TEXT UNIQUE NOT NULL,
           title TEXT NOT NULL,
           description TEXT NOT NULL,
+          prompt_kind TEXT DEFAULT 'normal',
           requirements TEXT,
           time_limit INTEGER,
           word_limit_min INTEGER,
@@ -462,6 +463,7 @@ const migrations = [
           task_type TEXT NOT NULL,
           title TEXT NOT NULL,
           description TEXT NOT NULL,
+          prompt_kind TEXT DEFAULT 'normal',
           requirements TEXT,
           time_limit INTEGER,
           word_limit_min INTEGER,
@@ -671,6 +673,202 @@ const migrations = [
       }
 
       console.log('迁移 v6: 墨境写作成长系统表创建完成');
+    }
+  },
+  {
+    version: 7,
+    name: '墨境等级经验曲线优化',
+    description: '调整等级经验阈值，使 Lv6≈100万字、Lv10≈5000万字（按 0.05 XP/字估算）',
+    up: (db) => {
+      console.log('迁移 v7: 开始优化墨境等级经验曲线...');
+
+      // 表不存在则跳过
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='mojing_level_config'
+      `).get();
+      if (!tableExists) {
+        console.log('迁移 v7: mojing_level_config 不存在，跳过');
+        return;
+      }
+
+      const level6 = db.prepare(`
+        SELECT required_xp FROM mojing_level_config WHERE level = 6
+      `).get();
+
+      // 没有数据（例如新库尚未seed）则跳过，由seed写入新曲线
+      if (!level6) {
+        console.log('迁移 v7: 等级配置尚未初始化，跳过（由seed写入）');
+        return;
+      }
+
+      // 已经是新曲线：Lv6 通常会 >= 5万
+      if ((level6.required_xp || 0) >= 10000) {
+        console.log('迁移 v7: 检测到等级经验已优化，跳过');
+        return;
+      }
+
+      const scaleL6 = 38;
+      const scaleL10 = 334;
+      const p = Math.log(scaleL10 / scaleL6) / Math.log(10 / 6);
+      const c = scaleL6 / Math.pow(6, p);
+
+      const rows = db.prepare(`
+        SELECT level, required_xp FROM mojing_level_config ORDER BY level ASC
+      `).all();
+
+      const update = db.prepare(`
+        UPDATE mojing_level_config SET required_xp = ? WHERE level = ?
+      `);
+
+      for (const row of rows) {
+        if (!row || !row.level) continue;
+        if (row.level <= 1) {
+          update.run(0, row.level);
+          continue;
+        }
+        const scale = c * Math.pow(row.level, p);
+        const newXp = Math.round((row.required_xp || 0) * scale);
+        update.run(newXp, row.level);
+      }
+
+      // 同步用户当前等级，避免出现“当前等级阈值 > total_xp”导致进度为负
+      const profile = db.prepare(`SELECT id, total_xp FROM mojing_profile LIMIT 1`).get();
+      if (profile) {
+        const bestLevel = db.prepare(`
+          SELECT level, title FROM mojing_level_config
+          WHERE required_xp <= ?
+          ORDER BY level DESC
+          LIMIT 1
+        `).get(profile.total_xp || 0);
+
+        if (bestLevel && bestLevel.level) {
+          db.prepare(`
+            UPDATE mojing_profile
+            SET current_level = ?, current_title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(bestLevel.level, bestLevel.title, profile.id);
+        }
+      }
+
+      console.log('迁移 v7: 墨境等级经验曲线优化完成');
+    }
+  },
+  {
+    version: 7,
+    name: 'AI配置提供商类型',
+    description: '为ai_config表添加provider_type字段，支持不同AI提供商的特定参数',
+    up: (db) => {
+      console.log('迁移 v7: 添加provider_type字段...');
+      
+      // 检查provider_type列是否已存在
+      const columns = db.prepare("PRAGMA table_info(ai_config)").all();
+      const hasProviderType = columns.some(col => col.name === 'provider_type');
+      
+      if (!hasProviderType) {
+        db.exec(`
+          ALTER TABLE ai_config ADD COLUMN provider_type TEXT DEFAULT 'openai'
+        `);
+        console.log('迁移 v7: provider_type 列添加成功');
+      } else {
+        console.log('迁移 v7: provider_type 列已存在，跳过');
+      }
+
+      console.log('迁移 v7: AI配置提供商类型迁移完成');
+    }
+  },
+  {
+    version: 8,
+    name: '墨境任务题目类型扩展',
+    description: '为任务模板与每日任务增加prompt_kind字段，支持润色/续写题目类型',
+    up: (db) => {
+      console.log('迁移 v8: 添加 prompt_kind 字段...');
+
+      const ensureColumn = (tableName) => {
+        const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+        const hasColumn = columns.some(col => col.name === 'prompt_kind');
+        if (hasColumn) return;
+        try {
+          db.exec(`ALTER TABLE ${tableName} ADD COLUMN prompt_kind TEXT DEFAULT 'normal'`);
+        } catch (e) {
+          const msg = String(e?.message || '');
+          if (!msg.toLowerCase().includes('duplicate column')) {
+            throw e;
+          }
+        }
+      };
+
+      // 表不存在则跳过
+      const dailyExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='mojing_daily_tasks'
+      `).get();
+      const templateExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='mojing_task_templates'
+      `).get();
+
+      if (templateExists) {
+        ensureColumn('mojing_task_templates');
+        db.prepare(`
+          UPDATE mojing_task_templates SET prompt_kind = 'normal'
+          WHERE prompt_kind IS NULL OR TRIM(prompt_kind) = ''
+        `).run();
+      }
+
+      if (dailyExists) {
+        ensureColumn('mojing_daily_tasks');
+        db.prepare(`
+          UPDATE mojing_daily_tasks SET prompt_kind = 'normal'
+          WHERE prompt_kind IS NULL OR TRIM(prompt_kind) = ''
+        `).run();
+      }
+
+      console.log('迁移 v8: prompt_kind 字段迁移完成');
+    }
+  },
+  {
+    version: 9,
+    name: '清理重复墨点成就占位数据',
+    description: '删除历史版本因补齐成就数量而插入的 task_complete=1 占位成就，避免“完成 1 个墨点任务”重复显示',
+    up: (db) => {
+      console.log('迁移 v9: 清理重复成就占位数据...');
+
+      const achievementsTable = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='mojing_achievements'
+      `).get();
+      if (!achievementsTable) {
+        console.log('迁移 v9: mojing_achievements 不存在，跳过');
+        return;
+      }
+
+      // 1) 直接清理已知前缀的占位成就
+      try {
+        const beforeFill = db.prepare(`SELECT COUNT(*) as c FROM mojing_achievements WHERE code LIKE 'A-FILL%';`).get().c;
+        db.prepare(`DELETE FROM mojing_achievements WHERE code LIKE 'A-FILL%';`).run();
+        const afterFill = db.prepare(`SELECT COUNT(*) as c FROM mojing_achievements WHERE code LIKE 'A-FILL%';`).get().c;
+        console.log(`迁移 v9: 清理 A-FILL* 占位成就: ${beforeFill - afterFill} 条`);
+      } catch (e) {
+        console.log('迁移 v9: 清理 A-FILL* 时发生错误（可忽略）:', e.message);
+      }
+
+      // 2) 兜底清理：历史版本把占位成就错误地设为 task_complete=1（显示为“完成 1 个墨点任务”）
+      try {
+        const beforeDup = db.prepare(`
+          SELECT COUNT(*) as c FROM mojing_achievements
+          WHERE category = 'special' AND requirement_type = 'task_complete' AND requirement_value = 1
+        `).get().c;
+        db.prepare(`
+          DELETE FROM mojing_achievements
+          WHERE category = 'special' AND requirement_type = 'task_complete' AND requirement_value = 1
+        `).run();
+        const afterDup = db.prepare(`
+          SELECT COUNT(*) as c FROM mojing_achievements
+          WHERE category = 'special' AND requirement_type = 'task_complete' AND requirement_value = 1
+        `).get().c;
+        console.log(`迁移 v9: 清理 special/task_complete=1 占位成就: ${beforeDup - afterDup} 条`);
+      } catch (e) {
+        console.log('迁移 v9: 清理重复条件占位成就时发生错误（可忽略）:', e.message);
+      }
+
+      console.log('迁移 v9: 重复成就占位数据清理完成');
     }
   }
 ];

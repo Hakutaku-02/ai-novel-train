@@ -46,7 +46,8 @@ function getConfigForFeature(featureKey) {
       model: featureConfig.model_name,
       maxTokens: featureConfig.max_tokens,
       temperature: featureConfig.temperature,
-      timeout: featureConfig.timeout
+      timeout: featureConfig.timeout,
+      providerType: featureConfig.provider_type || 'openai'
     };
   }
   
@@ -62,7 +63,8 @@ function getConfigForFeature(featureKey) {
       model: defaultConfig.model_name,
       maxTokens: defaultConfig.max_tokens,
       temperature: defaultConfig.temperature,
-      timeout: defaultConfig.timeout
+      timeout: defaultConfig.timeout,
+      providerType: defaultConfig.provider_type || 'openai'
     };
   }
   
@@ -78,12 +80,21 @@ function getConfigForFeature(featureKey) {
       model: activeConfig.model_name,
       maxTokens: activeConfig.max_tokens,
       temperature: activeConfig.temperature,
-      timeout: activeConfig.timeout
+      timeout: activeConfig.timeout,
+      providerType: activeConfig.provider_type || 'openai'
     };
   }
   
   throw new Error('请先配置 AI API');
 }
+
+// 说明：系统默认支持多种 AI 提供商（可在前端下拉选择）：
+// - openai
+// - azure
+// - anthropic
+// - modelscope (魔搭)
+// - cerebras
+// - openrouter
 
 // 获取当前激活的 AI 配置（兼容旧接口）
 function getActiveConfig() {
@@ -109,7 +120,8 @@ function getActiveConfig() {
     model: config.model_name,
     maxTokens: config.max_tokens,
     temperature: config.temperature,
-    timeout: config.timeout
+    timeout: config.timeout,
+    providerType: config.provider_type || 'openai'
   };
 }
 
@@ -122,7 +134,8 @@ async function callAI(options) {
     messages,
     maxTokens = 4096,
     temperature = 0.7,
-    timeout = 1200000 // 20分钟
+    timeout = 1200000, // 20分钟
+    providerType = 'openai'
   } = options;
 
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
@@ -131,18 +144,34 @@ async function callAI(options) {
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
+    // 构建请求体
+    const requestBody = {
+      model,
+      messages,
+      max_tokens: maxTokens,
+      temperature
+    };
+
+    // 魔搭 / ModelScope 提供商特殊处理：非流式调用时必须禁用 thinking
+    // 有些模型（例如 Qwen 系列）会在不同位置校验该参数（enable_thinking / parameters.enable_thinking / parameter.enable_thinking）
+    // 因此在这里兼容性地同时设置多个字段，确保非流式请求通过校验
+    const lowerProvider = String(providerType || '').toLowerCase();
+    const lowerModel = String(model || '').toLowerCase();
+    if (lowerProvider.includes('moda') || lowerProvider.includes('modelscope') || lowerModel.startsWith('qwen')) {
+      // top-level compatibility
+      requestBody.enable_thinking = false;
+      // nested keys some endpoints expect
+      requestBody.parameters = Object.assign({}, requestBody.parameters, { enable_thinking: false });
+      requestBody.parameter = Object.assign({}, requestBody.parameter, { enable_thinking: false });
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        max_tokens: maxTokens,
-        temperature
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal
     });
 
@@ -185,7 +214,8 @@ async function callAIWithConfig(messages, options = {}) {
     messages,
     maxTokens: options.maxTokens || config.maxTokens,
     temperature: options.temperature || config.temperature,
-    timeout: options.timeout || config.timeout
+    timeout: options.timeout || config.timeout,
+    providerType: config.providerType
   });
 }
 
@@ -200,7 +230,8 @@ async function callAIForFeature(featureKey, messages, options = {}) {
     messages,
     maxTokens: options.maxTokens || config.maxTokens,
     temperature: options.temperature || config.temperature,
-    timeout: options.timeout || config.timeout
+    timeout: options.timeout || config.timeout,
+    providerType: config.providerType
   });
 }
 
@@ -290,7 +321,8 @@ async function analyzeChapter(content) {
     messages,
     maxTokens: config.maxTokens || 8192,
     temperature: 0.3,
-    timeout: config.timeout || 120000
+    timeout: config.timeout || 120000,
+    providerType: config.providerType
   });
 
   // 解析返回的JSON
@@ -360,7 +392,8 @@ async function generateChapterRegex(sampleText) {
     messages,
     maxTokens: config.maxTokens || 2048,
     temperature: 0.3,
-    timeout: config.timeout || 60000
+    timeout: config.timeout || 60000,
+    providerType: config.providerType
   });
 
   // 解析返回的JSON

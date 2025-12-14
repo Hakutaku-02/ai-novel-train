@@ -40,7 +40,8 @@ const config = ref({
   apiKey: '',
   model: 'gpt-3.5-turbo',
   maxTokens: 4096,
-  temperature: 0.7
+  temperature: 0.7,
+  providerType: 'openai'
 })
 
 const presetModels = ref([
@@ -54,10 +55,13 @@ const presetModels = ref([
 ])
 
 const presetProviders = [
-  { label: 'OpenAI', value: 'https://api.openai.com/v1' },
-  { label: 'Azure OpenAI', value: 'https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT' },
-  { label: 'Anthropic', value: 'https://api.anthropic.com/v1' },
-  { label: '自定义', value: '' }
+  { label: 'OpenAI', value: 'https://api.openai.com/v1', type: 'openai' },
+  { label: 'Azure OpenAI', value: 'https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT', type: 'azure' },
+  { label: 'Anthropic', value: 'https://api.anthropic.com/v1', type: 'anthropic' },
+  { label: '魔搭 ModelScope', value: 'https://api-inference.modelscope.cn/v1', type: 'modelscope' },
+  { label: 'Cerebras', value: 'https://api.cerebras.ai/v1', type: 'cerebras' },
+  { label: 'OpenRouter', value: 'https://openrouter.ai/api/v1', type: 'openrouter' },
+  { label: '自定义', value: '', type: 'custom' }
 ]
 
 async function loadConfigs() {
@@ -112,7 +116,8 @@ function openAddConfigDialog() {
     apiKey: '',
     model: 'gpt-3.5-turbo',
     maxTokens: 4096,
-    temperature: 0.7
+    temperature: 0.7,
+    providerType: 'openai'
   }
   showConfigDialog.value = true
 }
@@ -127,7 +132,8 @@ function openEditConfigDialog(item) {
     apiKey: item.api_key || '',
     model: item.model_name,
     maxTokens: item.max_tokens,
-    temperature: item.temperature
+    temperature: item.temperature,
+    providerType: item.provider_type || 'openai'
   }
   showConfigDialog.value = true
 }
@@ -142,7 +148,8 @@ function openCopyConfigDialog(item) {
     apiKey: item.api_key || '',
     model: item.model_name,
     maxTokens: item.max_tokens,
-    temperature: item.temperature
+    temperature: item.temperature,
+    providerType: item.provider_type || 'openai'
   }
   showConfigDialog.value = true
 }
@@ -176,6 +183,7 @@ async function handleSaveConfig() {
       model_name: config.value.model,
       max_tokens: config.value.maxTokens,
       temperature: config.value.temperature,
+      provider_type: config.value.providerType,
       is_active: true
     }
     await saveAIConfig(dataToSave)
@@ -220,7 +228,8 @@ async function handleTest() {
     const testData = {
       api_base_url: config.value.baseUrl,
       api_key: config.value.apiKey,
-      model_name: config.value.model
+      model_name: config.value.model,
+      provider_type: config.value.providerType
     }
     const res = await testAIConnection(testData)
     
@@ -237,10 +246,9 @@ async function handleTest() {
   }
 }
 
-function selectProvider(url) {
-  if (url) {
-    config.value.baseUrl = url
-  }
+function selectProvider(provider) {
+  config.value.baseUrl = provider.value
+  config.value.providerType = provider.type
 }
 
 async function fetchModels() {
@@ -519,7 +527,7 @@ onMounted(async () => {
               :key="provider.value"
               :type="config.baseUrl === provider.value ? 'primary' : ''"
               size="small"
-              @click="selectProvider(provider.value)"
+              @click="selectProvider(provider)"
             >
               {{ provider.label }}
             </el-button>
@@ -531,6 +539,21 @@ onMounted(async () => {
             v-model="config.baseUrl"
             placeholder="https://api.openai.com/v1"
           />
+        </el-form-item>
+
+        <el-form-item label="提供商类型">
+          <el-select v-model="config.providerType" placeholder="选择提供商类型">
+            <el-option label="OpenAI" value="openai" />
+            <el-option label="Azure OpenAI" value="azure" />
+            <el-option label="Anthropic" value="anthropic" />
+            <el-option label="魔搭 ModelScope" value="modelscope" />
+            <el-option label="Cerebras" value="cerebras" />
+            <el-option label="OpenRouter" value="openrouter" />
+            <el-option label="其他" value="custom" />
+          </el-select>
+          <div style="color: #909399; font-size: 12px; margin-top: 4px;">
+            提示：魔搭（ModelScope）在使用 Qwen 系列模型时会自动设置必要参数；Cerebras / OpenRouter 如有特殊参数要求，系统会尽量兼容
+          </div>
         </el-form-item>
         
         <el-form-item label="API Key" required>

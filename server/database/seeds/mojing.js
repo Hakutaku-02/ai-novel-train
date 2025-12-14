@@ -5,7 +5,11 @@
 
 /**
  * 等级配置
- * 经验值公式：required_xp = 100 * 1.5^(level-1)
+ * 说明：原始曲线基于 100 * 1.5^(level-1)
+ * 为了让“写作量”与等级更一致，播种时会对 required_xp 做一次缩放：
+ * - 约 Lv6 ≈ 100万字
+ * - 约 Lv10 ≈ 5000万字
+ *（按 0.05 XP / 字估算，来自任务/随心写的 wordMultiplier）
  */
 const levelConfig = [
   // 新手村 LV 1-10
@@ -69,11 +73,30 @@ const levelConfig = [
   { level: 50, required_xp: 84949310073, title: '一代宗师', stage: '宗师境', description: '已入宗师之境', unlock_features: '解锁宗师境全部功能' },
 ];
 
+function getLevelXpScale(level) {
+  if (level <= 1) return 1;
+  // 拟合：scale(6)=38, scale(10)=334
+  const scaleL6 = 38;
+  const scaleL10 = 334;
+  const p = Math.log(scaleL10 / scaleL6) / Math.log(10 / 6);
+  const c = scaleL6 / Math.pow(6, p);
+  return c * Math.pow(level, p);
+}
+
+function getScaledRequiredXP(config) {
+  if (config.level <= 1) return 0;
+  return Math.round(config.required_xp * getLevelXpScale(config.level));
+}
+
 /**
  * 墨点任务模板（5分钟微任务，10XP）
  * 六维属性：character(人物力), conflict(冲突力), scene(场景力), dialogue(对话力), rhythm(节奏力), style(风格力)
  */
 const inkDotTemplates = [
+  // 新增题目类型：润色 / 续写（由系统掷骰子决定，也可作为预设模板）
+  { code: 'P-PL01', title: '干主线润色', description: '逻辑主线：一个人回到阔别多年的故乡，在旧屋里发现一封未寄出的信。请把这条主线润色成一段有画面、有节奏的文字。', prompt_kind: 'polish', attr_type: 'style', difficulty: 'normal', tags: '润色,主线,风格' },
+  { code: 'P-CN01', title: '一句续写', description: '起始内容：\n“门缝里透出一线光，像有人在黑暗里眨眼。”\n请基于这段起始内容续写一段短文本，推进一个小变化。', prompt_kind: 'continue', attr_type: 'rhythm', difficulty: 'normal', tags: '续写,起始段,节奏' },
+
   // 人物力 - 角色塑造
   { code: 'P-C01', title: '角色恐惧', description: '用一句话写出一个角色最深的恐惧', attr_type: 'character', difficulty: 'easy', tags: '人物,心理,一句话' },
   { code: 'P-C02', title: '职业特征', description: '描写一双手，让读者猜出职业', attr_type: 'character', difficulty: 'normal', tags: '人物,外貌,细节' },
@@ -269,6 +292,8 @@ const taskThresholds = [1, 2, 5, 10, 20, 50, 100, 200, 500];
 let genIdx = 1;
 for (const t of taskTypes) {
   for (const thr of taskThresholds) {
+    // 已有手工定义的“首次完成”成就（A-M01/A-M04/A-M06），避免再生成 thr=1 造成重复展示
+    if (thr === 1) continue;
     addGenerated(`A-${t.prefix}${String(thr).padStart(3,'0')}`,
       `${t.title}${thr}次`,
       `完成${thr}个${t.title}任务`,
@@ -341,26 +366,81 @@ for (let i = 1; i <= 20; i++) {
     'special', 'special_trigger', i, 50, '🏆', i > 5);
 }
 
-// 合并生成的成就，确保总数达到188
+// 写作速度成就（基于完成时间）
+const speedAchievements = [
+  { code: 'A-SPD01', name: '闪电之笔', desc: '5分钟内完成一个墨点任务', type: 'speed_fast', value: 300, xp: 30, icon: '⚡' },
+  { code: 'A-SPD02', name: '快笔如飞', desc: '15分钟内完成一个墨线任务', type: 'speed_fast', value: 900, xp: 50, icon: '⚡' },
+  { code: 'A-SPD03', name: '一气呵成', desc: '40分钟内完成一个墨章挑战', type: 'speed_fast', value: 2400, xp: 80, icon: '⚡' },
+  { code: 'A-SPD04', name: '疾笔生风', desc: '累计10次快速完成任务', type: 'speed_count', value: 10, xp: 60, icon: '💨' },
+  { code: 'A-SPD05', name: '专注力', desc: '连续3天每天写作超过30分钟', type: 'focus_streak', value: 3, xp: 70, icon: '🎯' },
+];
+for (const s of speedAchievements) {
+  addGenerated(s.code, s.name, s.desc, 'quality', s.type, s.value, s.xp, s.icon, false);
+}
+
+// 时段写作成就
+const timeAchievements = [
+  { code: 'A-TIME01', name: '晨光墨者', desc: '清晨6-9点完成10个任务', type: 'time_morning', value: 10, xp: 50, icon: '🌅' },
+  { code: 'A-TIME02', name: '午间笔耕', desc: '午间12-14点完成10个任务', type: 'time_noon', value: 10, xp: 50, icon: '☀️' },
+  { code: 'A-TIME03', name: '夜行文士', desc: '深夜22-24点完成10个任务', type: 'time_night', value: 10, xp: 50, icon: '🌙' },
+  { code: 'A-TIME04', name: '破晓执笔', desc: '凌晨0-6点完成5个任务', type: 'time_dawn', value: 5, xp: 80, icon: '🌃' },
+];
+for (const t of timeAchievements) {
+  addGenerated(t.code, t.name, t.desc, 'special', t.type, t.value, t.xp, t.icon, false);
+}
+
+// 属性均衡成就
+const balanceAchievements = [
+  { code: 'A-BAL01', name: '均衡发展', desc: '所有属性达到20', type: 'all_attr', value: 20, xp: 100, icon: '⚖️' },
+  { code: 'A-BAL02', name: '全能选手', desc: '所有属性达到40', type: 'all_attr', value: 40, xp: 300, icon: '🌟' },
+  { code: 'A-BAL03', name: '多面手', desc: '至少3个属性达到60', type: 'multi_attr', value: 60, xp: 200, icon: '🎨' },
+];
+for (const b of balanceAchievements) {
+  addGenerated(b.code, b.name, b.desc, 'skill', b.type, b.value, b.xp, b.icon, false);
+}
+
+// 主题多样性成就
+const varietyAchievements = [
+  { code: 'A-VAR01', name: '六艺通修', desc: '完成所有6种属性类型的任务各5次', type: 'attr_variety', value: 5, xp: 150, icon: '🎭' },
+  { code: 'A-VAR02', name: '技法大全', desc: '完成所有6种属性类型的任务各20次', type: 'attr_variety', value: 20, xp: 300, icon: '📚', hidden: true },
+  { code: 'A-VAR03', name: '难度挑战者', desc: '完成20个困难难度任务', type: 'difficulty_hard', value: 20, xp: 120, icon: '🔥' },
+  { code: 'A-VAR04', name: '极限挑战', desc: '完成50个困难难度任务', type: 'difficulty_hard', value: 50, xp: 250, icon: '💪' },
+];
+for (const v of varietyAchievements) {
+  addGenerated(v.code, v.name, v.desc, 'milestone', v.type, v.value, v.xp, v.icon, v.hidden || false);
+}
+
+// 效率与产出成就
+const efficiencyAchievements = [
+  { code: 'A-EFF01', name: '日产千字', desc: '单日写作1000字以上', type: 'daily_words', value: 1000, xp: 50, icon: '📈' },
+  { code: 'A-EFF02', name: '日产三千', desc: '单日写作3000字以上', type: 'daily_words', value: 3000, xp: 100, icon: '🚀' },
+  { code: 'A-EFF03', name: '周产万字', desc: '一周内写作10000字以上', type: 'weekly_words', value: 10000, xp: 150, icon: '💎' },
+  { code: 'A-EFF04', name: '日更达人', desc: '连续7天每天至少完成1个任务', type: 'daily_task_streak', value: 7, xp: 120, icon: '📅' },
+  { code: 'A-EFF05', name: '效率狂魔', desc: '单日完成5个任务', type: 'daily_task_count', value: 5, xp: 80, icon: '⚡' },
+];
+for (const e of efficiencyAchievements) {
+  addGenerated(e.code, e.name, e.desc, 'volume', e.type, e.value, e.xp, e.icon, false);
+}
+
+// 完美主义与精益求精成就
+const perfectAchievements = [
+  { code: 'A-PRF01', name: '完美主义', desc: '获得10次95分以上评分', type: 'score_95_count', value: 10, xp: 200, icon: '💯' },
+  { code: 'A-PRF02', name: '精益求精', desc: '连续3次任务评分递增', type: 'score_ascending', value: 3, xp: 80, icon: '📊' },
+  { code: 'A-PRF03', name: '零失误', desc: '连续20次任务评分80+', type: 'score_streak_20', value: 20, xp: 200, icon: '🎖️' },
+  { code: 'A-PRF04', name: '巅峰时刻', desc: '获得满分100分评价', type: 'score_perfect', value: 100, xp: 500, icon: '🏆', hidden: true },
+];
+for (const p of perfectAchievements) {
+  addGenerated(p.code, p.name, p.desc, 'quality', p.type, p.value, p.xp, p.icon, p.hidden || false);
+}
+
+// 合并所有生成的成就
 for (const g of generatedAchievements) {
   achievements.push(g);
 }
 
-// 如果仍不足188，追加简单素数编号的占位成就
-let idx = 1;
-while (achievements.length < 188) {
-  achievements.push({
-    code: `A-EX${String(idx).padStart(3,'0')}`,
-    name: `额外成就${idx}`,
-    description: `额外自动生成占位成就 #${idx}`,
-    category: 'special',
-    requirement_type: 'task_complete',
-    requirement_value: 1 + idx,
-    xp_reward: 5 + idx,
-    icon: '✨',
-    is_hidden: idx % 3 === 0
-  });
-  idx++;
+// 补充填充到188个（理论上已经足够，这里作为保险）
+if (achievements.length < 188) {
+  console.warn(`警告：成就数量不足188个，当前 ${achievements.length} 个`);
 }
 
 /**
@@ -418,7 +498,7 @@ function seedMojingData(db) {
   for (const config of levelConfig) {
     insertLevel.run(
       config.level,
-      config.required_xp,
+      getScaledRequiredXP(config),
       config.title,
       config.stage,
       config.description || '',
@@ -430,14 +510,14 @@ function seedMojingData(db) {
   // 2. 初始化墨点任务模板
   const insertTask = db.prepare(`
     INSERT OR IGNORE INTO mojing_task_templates 
-    (task_type, code, title, description, requirements, time_limit, word_limit_min, word_limit_max, attr_type, xp_reward, attr_reward, difficulty, tags)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (task_type, code, title, description, prompt_kind, requirements, time_limit, word_limit_min, word_limit_max, attr_type, xp_reward, attr_reward, difficulty, tags)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   for (const task of inkDotTemplates) {
     insertTask.run(
       'inkdot', task.code, task.title, task.description,
-      task.requirements || null, task.time_limit || 5,
+      task.prompt_kind || 'normal', task.requirements || null, task.time_limit || 5,
       task.word_limit_min || null, task.word_limit_max || 100,
       task.attr_type, 10, 1, task.difficulty || 'normal', task.tags || null
     );
@@ -448,7 +528,7 @@ function seedMojingData(db) {
   for (const task of inkLineTemplates) {
     insertTask.run(
       'inkline', task.code, task.title, task.description,
-      task.requirements || null, task.time_limit || 20,
+      task.prompt_kind || 'normal', task.requirements || null, task.time_limit || 20,
       task.word_limit_min || 150, task.word_limit_max || 350,
       task.attr_type, 30, 2, task.difficulty || 'normal', task.tags || null
     );
@@ -459,7 +539,7 @@ function seedMojingData(db) {
   for (const task of inkChapterTemplates) {
     insertTask.run(
       'inkchapter', task.code, task.title, task.description,
-      task.requirements || null, null,
+      task.prompt_kind || 'normal', task.requirements || null, null,
       task.word_limit_min || 800, task.word_limit_max || 1500,
       'comprehensive', task.xp_reward || 150, 5, 'hard', task.theme || null
     );
@@ -488,23 +568,6 @@ function seedMojingData(db) {
   }
   console.log(`- 成就定义: ${achievements.length} 条`);
 
-  // 确保数据库中至少包含188个成就（包含隐藏成就）
-  const currentTotal = db.prepare(`SELECT COUNT(*) as count FROM mojing_achievements`).get().count;
-  if (currentTotal < 188) {
-    console.log(`- 当前数据库成就 ${currentTotal} 条，不足188，追加占位成就...`);
-    let addIdx = 1;
-    while (db.prepare(`SELECT COUNT(*) as count FROM mojing_achievements`).get().count < 188) {
-      const code = `A-FILL${String(addIdx).padStart(3,'0')}`;
-      const name = `系统占位成就 ${addIdx}`;
-      try {
-        insertAchievement.run(code, name, `自动追加占位成就 #${addIdx}`, 'special', '🏷️', 10, 'task_complete', 1, 0, sortOrder++);
-      } catch (e) {
-        // 忽略重复
-      }
-      addIdx++;
-    }
-    console.log(`- 已追加占位成就，现有总数: ${db.prepare(`SELECT COUNT(*) as count FROM mojing_achievements`).get().count}`);
-  }
   
   // 6. 初始化连续打卡奖励
   const insertStreak = db.prepare(`
