@@ -15,6 +15,16 @@ const AI_FEATURES = {
   CHAPTER_REGEX_GENERATE: 'chapter_regex_generate' // 章节标题正则生成
 };
 
+// 统一清洗 AI 返回内容：移除 <think>...</think>
+function stripThinkTags(text) {
+  if (text == null) return '';
+  const raw = String(text);
+  return raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<\/?think>/gi, '')
+    .trim();
+}
+
 // 解密 API Key
 function decryptApiKey(encryptedKey) {
   if (!encryptedKey) return null;
@@ -152,20 +162,22 @@ async function callAI(options) {
       temperature
     };
 
-    // 魔搭 / ModelScope 提供商特殊处理：非流式调用时必须禁用 thinking
-    // 有些模型（例如 Qwen 系列）会在不同位置校验该参数（enable_thinking / parameters.enable_thinking / parameter.enable_thinking）
-    // 因此在这里兼容性地同时设置多个字段，确保非流式请求通过校验
+    // Qwen 兼容性处理：仅当模型为 qwen 系列时添加 enable_thinking
+    // 说明：部分 Qwen 兼容端点会在非流式调用中校验该参数（enable_thinking / parameters.enable_thinking / parameter.enable_thinking）
+    // 为避免对非 Qwen 模型发送额外字段，这里只在模型名以 qwen 开头时携带。
     const lowerProvider = String(providerType || '').toLowerCase();
     const lowerModel = String(model || '').toLowerCase();
-    if (lowerProvider.includes('moda') || lowerProvider.includes('modelscope') || lowerModel.startsWith('qwen')) {
-      // top-level compatibility
-      requestBody.enable_thinking = false;
-      // nested keys some endpoints expect
-      requestBody.parameters = Object.assign({}, requestBody.parameters, { enable_thinking: false });
-      requestBody.parameter = Object.assign({}, requestBody.parameter, { enable_thinking: false });
-    }
+    const lowerBaseUrl = String(baseUrl || '').toLowerCase();
+    const isQwenModel = lowerModel.substring('qwen3') != -1;
 
-    const response = await fetch(url, {
+    // if (isQwenModel) {
+    //   requestBody.enable_thinking = false;
+    //   requestBody.parameters = Object.assign({}, requestBody.parameters, { enable_thinking: false });
+    //   requestBody.parameter = Object.assign({}, requestBody.parameter, { enable_thinking: false });
+    // }
+
+    // 发送请求（若返回 422 且包含 enable_thinking/parameters 的不支持错误，则重试一次去掉这些字段）
+    let response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -178,8 +190,36 @@ async function callAI(options) {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`API 请求失败: ${response.status} - ${error}`);
+      const rawError = await response.text();
+
+      // 如果是 422 且提示关于 enable_thinking/parameters 的不支持错误，尝试重试一次（移除兼容字段）
+      if (response.status === 422 && /enable_thinking|parameters|parameter/.test(rawError)) {
+        try {
+          const retryBody = Object.assign({}, requestBody);
+          delete retryBody.parameters;
+          delete retryBody.parameter;
+
+          // 记录一个简短的调试日志（不包含 messages）
+          console.warn('AI 请求遭遇 422，正在尝试移除兼容字段并重试（已屏蔽 messages）');
+
+          response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(retryBody),
+            signal: controller.signal
+          });
+        } catch (retryErr) {
+          // 忽略，下面会再次抛出原始错误
+        }
+      }
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`API 请求失败: ${response.status} - ${error}`);
+      }
     }
 
     const data = await response.json();
@@ -189,7 +229,7 @@ async function callAI(options) {
     }
 
     return {
-      content: data.choices[0].message.content,
+      content: stripThinkTags(data.choices?.[0]?.message?.content),
       usage: data.usage
     };
   } catch (error) {
@@ -206,7 +246,7 @@ async function callAI(options) {
 // 使用当前配置调用 AI（兼容旧接口）
 async function callAIWithConfig(messages, options = {}) {
   const config = getActiveConfig();
-  
+
   return callAI({
     baseUrl: config.baseUrl,
     apiKey: config.apiKey,
@@ -355,7 +395,10 @@ async function generateChapterRegex(sampleText) {
   const config = getConfigForFeature(AI_FEATURES.CHAPTER_REGEX_GENERATE);
   
   const systemPrompt = `你是一位专业的文本分析专家，擅长分析小说章节结构。
-请根据提供的小说文本样本，分析出章节标题的格式规律，并生成一个精确的JavaScript正则表达式来匹配章节标题。
+  请根据提供的小说文本样本，分析出章节标题的格式规律，并生成一个精确的JavaScript正则表达式来匹配章节标题。
+
+  重要说明：样本文本可能由两段拼接而成（例如“开头节选 + 中段节选”），不同位置的章节标题格式/编号位数可能存在差异。
+  请综合全部样本，生成能兼容所有样本章节标题行的正则表达式；如存在多种格式，可使用可选分支兼容，但不要过于宽泛以免误匹配正文。
 
 常见的章节标题格式包括：
 1. "第X章 标题" 格式（如：第一章 初见、第1章 开始）
@@ -367,18 +410,20 @@ async function generateChapterRegex(sampleText) {
 
 请仔细分析文本中的章节标题模式，生成能准确匹配的正则表达式。
 
-返回JSON格式：
+  返回JSON格式：
 {
   "regex": "正则表达式字符串（不要包含斜杠和标志）",
   "description": "对正则表达式的简要说明",
   "examples": ["匹配的示例标题1", "匹配的示例标题2", "匹配的示例标题3"]
 }
 
-注意：
-1. 正则表达式应该能匹配完整的章节标题行
-2. 不要过于宽泛，以免匹配到正文内容
-3. 使用JavaScript正则表达式语法
-4. 返回的regex字段只包含正则表达式本身，不需要斜杠包裹`;
+  注意：
+ 1. 正则表达式应该能匹配完整的章节标题行
+ 2. 不要过于宽泛，以免匹配到正文内容
+ 3. 对于章节编号部分，优先使用不限位数的数字匹配（例如使用 '\\d+' 而非 '\\d{1,2}' 或 '\\d{1,3}'），以保证能匹配 100 章及以上的章节标题
+ 4. 同时请返回一个更宽松的备用正则（如果适用），字段名为 'fallback_regex'，用于在用户的小说包含三位数或更多位数章节编号时使用
+ 5. 使用JavaScript正则表达式语法
+ 6. 返回的regex字段只包含正则表达式本身，不需要斜杠包裹`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -417,6 +462,25 @@ async function generateChapterRegex(sampleText) {
       new RegExp(regexResult.regex);
     } catch (e) {
       throw new Error('生成的正则表达式无效: ' + e.message);
+    }
+
+    // 如果生成的正则中包含限定位数的数字匹配（如 \d{1,2}），生成一个更宽松的备用正则（使用 \d+）以避免只匹配到 99 章的问题
+    try {
+      const original = String(regexResult.regex || '');
+      const generalized = original.replace(/\\d\{\d+(?:,\d+)?\}/g, '\\d+');
+      if (generalized !== original) {
+        // 验证备用正则
+        try {
+          new RegExp(generalized);
+          regexResult.fallback_regex = generalized;
+          // 在描述中追加说明
+          regexResult.description = (regexResult.description || '') + '（注意：已提供备用正则以支持更多位数章节编号）';
+        } catch (e) {
+          // 忽略备用正则无效的情况
+        }
+      }
+    } catch (e) {
+      // 忽略处理中出现的任何错误
     }
     
     return regexResult;

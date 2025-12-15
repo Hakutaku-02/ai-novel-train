@@ -110,6 +110,27 @@ export function getTaskStats() {
   return request.get('/mojing/tasks/stats/overview');
 }
 
+/**
+ * 获取所有已完成的任务
+ */
+export function getCompletedTasks(params = {}) {
+  return request.get('/mojing/tasks/completed', { params });
+}
+
+/**
+ * 获取任务的练习历史记录
+ */
+export function getTaskPracticeHistory(taskId) {
+  return request.get(`/mojing/tasks/${taskId}/history`);
+}
+
+/**
+ * 再次练习已完成的任务
+ */
+export function practiceTask(taskId) {
+  return request.post(`/mojing/tasks/${taskId}/practice`);
+}
+
 // ==================== 每日挑战 ====================
 
 /**

@@ -47,6 +47,7 @@ const regexData = ref({
   description: '',
   examples: []
 })
+const showRegexFallback = ref(false)
 const splitChapters = ref([])
 const splitSummary = ref({
   total: 0,
@@ -175,11 +176,25 @@ async function handleGenerateRegex() {
   try {
     const res = await generateChapterRegex(novelUploadData.value.sample_text)
     regexData.value = res.data
+    // 如果后端提供了备用正则，提示用户可切换
+    if (res.data.fallback_regex) {
+      showRegexFallback.value = true
+    } else {
+      showRegexFallback.value = false
+    }
     ElMessage.success('章节标题正则表达式生成成功')
   } catch (error) {
     ElMessage.error('生成正则表达式失败: ' + (error.message || '未知错误'))
   } finally {
     uploadLoading.value = false
+  }
+}
+
+function applyFallbackRegex() {
+  if (regexData.value?.fallback_regex) {
+    regexData.value.regex = regexData.value.fallback_regex
+    ElMessage.success('已使用更宽松的备用正则（\n 匹配更多位数的章节编号）')
+    showRegexFallback.value = false
   }
 }
 
@@ -197,6 +212,22 @@ async function handleSplitPreview() {
       novel_name: novelUploadData.value.novel_name,
       author: novelUploadData.value.author
     })
+    // 如果后端提示有备用更宽松的正则并且命中更多章节，提示用户切换
+    if (res.data.suggestion) {
+      const s = res.data.suggestion
+      const apply = await ElMessageBox.confirm(
+        `检测到原始正则可能限制章节编号位数（当前匹配 ${res.data.total} 个章节，备用正则可匹配 ${s.suggested_count} 个章节），是否使用备用正则？\n备用正则：${s.suggested_regex}`,
+        '检测到更宽松的正则',
+        { confirmButtonText: '使用备用正则', cancelButtonText: '保持原样', type: 'warning' }
+      ).then(() => true).catch(() => false)
+
+      if (apply) {
+        // 直接使用并重新请求预览
+        regexData.value.regex = res.data.suggestion.suggested_regex
+        return await handleSplitPreview()
+      }
+    }
+
     splitChapters.value = res.data.chapters
     splitSummary.value = {
       total: res.data.total,
@@ -543,6 +574,16 @@ onMounted(() => {
             
             <el-form-item label="正则表达式" v-if="regexData.regex">
               <el-input v-model="regexData.regex" placeholder="章节标题匹配正则表达式" />
+            </el-form-item>
+            <el-form-item v-if="showRegexFallback">
+              <el-alert title="检测到原始正则对章节编号位数有限制，可能只匹配到最多 99 章。建议使用备用正则以匹配更多位数章节编号。" type="warning" show-icon>
+                <template #description>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <div style="flex:1">备用正则：<code style="background:#f5f5f5;padding:2px 6px;border-radius:4px">{{ regexData.fallback_regex }}</code></div>
+                    <el-button size="small" type="primary" @click="applyFallbackRegex">使用备用正则（\d+）</el-button>
+                  </div>
+                </template>
+              </el-alert>
             </el-form-item>
             
             <el-form-item label="说明" v-if="regexData.description">

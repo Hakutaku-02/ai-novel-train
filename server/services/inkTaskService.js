@@ -480,15 +480,31 @@ async function submitTask(recordId, content, timeSpent = 0) {
     `).run(score, aiFeedback, recordId);
   } catch (e) {
     console.error('AI评审失败:', e);
-    // 评审失败也标记为完成，分数为基础分
+    // 评审失败也标记为完成，分数为基础分，并生成默认反馈
     score = 70;
+    const defaultFeedback = {
+      score: 70,
+      dimensions: {
+        completion: { score: 14, comment: "任务已完成" },
+        technique: { score: 14, comment: "技巧运用基本合理" },
+        creativity: { score: 14, comment: "具有一定创意" },
+        expression: { score: 14, comment: "表达清晰流畅" },
+        detail: { score: 14, comment: "细节处理得当" }
+      },
+      highlights: ["完成了写作任务"],
+      improvements: ["AI评审服务暂时不可用，这是系统默认评分"],
+      overall: "作品已提交成功！AI评审服务暂时不可用，给予基础评分。"
+    };
+    aiFeedback = JSON.stringify(defaultFeedback);
+    
     db.prepare(`
       UPDATE mojing_task_records SET
         score = ?,
+        ai_feedback = ?,
         status = 'completed',
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(score, recordId);
+    `).run(score, aiFeedback, recordId);
   }
   
   // 标记任务完成
@@ -536,13 +552,23 @@ async function submitTask(recordId, content, timeSpent = 0) {
   // 获取更新后的记录
   const updatedRecord = db.prepare(`SELECT * FROM mojing_task_records WHERE id = ?`).get(recordId);
   
+  // 从数据库记录中解析feedback，确保数据一致性
+  let feedbackData = null;
+  if (updatedRecord.ai_feedback) {
+    try {
+      feedbackData = JSON.parse(updatedRecord.ai_feedback);
+    } catch (e) {
+      console.error('解析ai_feedback失败:', e);
+    }
+  }
+  
   return {
     record: updatedRecord,
     task,
     xpResult,
     streakResult,
     newAchievements: achievements,
-    feedback: aiFeedback ? JSON.parse(aiFeedback) : null
+    feedback: feedbackData
   };
 }
 
@@ -832,6 +858,174 @@ function getTaskStats() {
   return { todayStats, totalStats, attrStats };
 }
 
+/**
+ * 获取所有已完成的任务
+ * @param {Object} options - 查询选项
+ * @returns {Array} 已完成的任务列表
+ */
+function getCompletedTasks(options = {}) {
+  const db = getDatabase();
+  const { 
+    limit = 50, 
+    offset = 0, 
+    taskType = 'all',
+    attrType = 'all'
+  } = options;
+  
+  let sql = `
+    SELECT 
+      dt.id,
+      dt.task_date,
+      dt.task_type,
+      dt.title,
+      dt.description,
+      dt.attr_type,
+      dt.xp_reward,
+      dt.difficulty,
+      COUNT(DISTINCT r.id) as practice_count,
+      MAX(r.score) as best_score,
+      MAX(r.submitted_at) as last_practice_at
+    FROM mojing_daily_tasks dt
+    INNER JOIN mojing_task_records r ON dt.id = r.task_id
+    WHERE r.status = 'completed'
+  `;
+  
+  const params = [];
+  
+  if (taskType !== 'all') {
+    sql += ` AND dt.task_type = ?`;
+    params.push(taskType);
+  }
+  
+  if (attrType !== 'all') {
+    sql += ` AND dt.attr_type = ?`;
+    params.push(attrType);
+  }
+  
+  sql += `
+    GROUP BY dt.id
+    ORDER BY last_practice_at DESC
+    LIMIT ? OFFSET ?
+  `;
+  
+  params.push(limit, offset);
+  
+  const tasks = db.prepare(sql).all(...params);
+  
+  // 获取总数
+  let countSql = `
+    SELECT COUNT(DISTINCT dt.id) as total
+    FROM mojing_daily_tasks dt
+    INNER JOIN mojing_task_records r ON dt.id = r.task_id
+    WHERE r.status = 'completed'
+  `;
+  
+  const countParams = [];
+  if (taskType !== 'all') {
+    countSql += ` AND dt.task_type = ?`;
+    countParams.push(taskType);
+  }
+  
+  if (attrType !== 'all') {
+    countSql += ` AND dt.attr_type = ?`;
+    countParams.push(attrType);
+  }
+  
+  const { total } = db.prepare(countSql).get(...countParams);
+  
+  return { tasks, total, limit, offset };
+}
+
+/**
+ * 获取任务的所有练习记录
+ * @param {number} taskId - 任务ID
+ * @returns {Array} 练习记录列表
+ */
+function getTaskPracticeHistory(taskId) {
+  const db = getDatabase();
+  
+  // 获取任务信息
+  const task = db.prepare(`
+    SELECT * FROM mojing_daily_tasks WHERE id = ?
+  `).get(taskId);
+  
+  if (!task) {
+    throw new Error('任务不存在');
+  }
+  
+  // 获取所有练习记录
+  const records = db.prepare(`
+    SELECT 
+      id,
+      content,
+      word_count,
+      time_spent,
+      status,
+      score,
+      ai_feedback,
+      xp_earned,
+      attr_earned,
+      submitted_at,
+      created_at
+    FROM mojing_task_records
+    WHERE task_id = ?
+    ORDER BY submitted_at DESC
+  `).all(taskId);
+  
+  return {
+    task,
+    records,
+    totalPractices: records.length,
+    completedPractices: records.filter(r => r.status === 'completed').length,
+    bestScore: Math.max(...records.map(r => r.score || 0), 0)
+  };
+}
+
+/**
+ * 重新开始已完成的任务（再次练习）
+ * @param {number} taskId - 任务ID
+ * @returns {Object} 新的练习记录
+ */
+function restartCompletedTask(taskId) {
+  const db = getDatabase();
+  
+  // 检查任务是否存在
+  const task = db.prepare(`
+    SELECT * FROM mojing_daily_tasks WHERE id = ?
+  `).get(taskId);
+  
+  if (!task) {
+    throw new Error('任务不存在');
+  }
+  
+  // 检查是否已经有完成记录
+  const hasCompleted = db.prepare(`
+    SELECT COUNT(*) as count FROM mojing_task_records 
+    WHERE task_id = ? AND status = 'completed'
+  `).get(taskId);
+  
+  if (hasCompleted.count === 0) {
+    throw new Error('该任务尚未完成过，请先完成任务');
+  }
+  
+  // 创建新的练习记录
+  const result = db.prepare(`
+    INSERT INTO mojing_task_records 
+    (task_id, task_type, status, created_at)
+    VALUES (?, ?, 'draft', CURRENT_TIMESTAMP)
+  `).run(taskId, task.task_type);
+  
+  const record = db.prepare(`
+    SELECT * FROM mojing_task_records WHERE id = ?
+  `).get(result.lastInsertRowid);
+  
+  return {
+    record,
+    task,
+    isPractice: true // 标识这是一次再练习
+  };
+}
+
 module.exports = {
   getTodayTasks,
   generateDailyTasksFromTemplates,
@@ -843,5 +1037,8 @@ module.exports = {
   updateDailyChallengeProgress,
   getWeeklyChallenge,
   getTaskStats,
+  getCompletedTasks,
+  getTaskPracticeHistory,
+  restartCompletedTask,
   MOJING_FEATURES
 };

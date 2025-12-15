@@ -30,7 +30,10 @@ const {
   getDailyChallenge,
   updateDailyChallengeProgress,
   getWeeklyChallenge,
-  getTaskStats
+  getTaskStats,
+  getCompletedTasks,
+  getTaskPracticeHistory,
+  restartCompletedTask
 } = require('../services/inkTaskService');
 const {
   manualGenerateTasks,
@@ -157,16 +160,27 @@ router.get('/achievements/next', (req, res) => {
  */
 router.get('/tasks/today', (req, res) => {
   try {
-    const { type = 'all' } = req.query;
-    const MAX_PENDING_PER_TYPE = 3;
+    const { type = 'all', showCompleted = 'true' } = req.query;
+    const shouldShowCompleted = showCompleted === 'true';
+    
     let tasks = getTodayTasks(type);
 
-    // 只返回“待完成”任务，且限制展示数量（降低选择负担）
-    tasks = (tasks || []).filter(t => !t?.isCompleted);
+    // 根据参数决定是否显示已完成的任务
+    if (!shouldShowCompleted) {
+      tasks = (tasks || []).filter(t => !t?.isCompleted);
+    }
 
+    // 分别统计已完成和未完成的任务
+    const completedTasks = tasks.filter(t => t?.isCompleted);
+    const pendingTasks = tasks.filter(t => !t?.isCompleted);
+    
+    // 确保当日任务最多6个（未完成3墨点+3墨线，已完成的都显示）
+    let displayTasks = [...completedTasks];
+    
     if (type === 'all') {
+      const MAX_PENDING_PER_TYPE = 3;
       const counters = { inkdot: 0, inkline: 0 };
-      tasks = tasks.filter(t => {
+      const filteredPending = pendingTasks.filter(t => {
         if (t.task_type === 'inkdot') {
           counters.inkdot += 1;
           return counters.inkdot <= MAX_PENDING_PER_TYPE;
@@ -177,18 +191,27 @@ router.get('/tasks/today', (req, res) => {
         }
         return false;
       });
+      displayTasks = [...completedTasks, ...filteredPending];
     } else {
-      tasks = tasks.slice(0, MAX_PENDING_PER_TYPE);
+      const MAX_PENDING_PER_TYPE = 3;
+      const filteredPending = pendingTasks.slice(0, MAX_PENDING_PER_TYPE);
+      displayTasks = [...completedTasks, ...filteredPending];
     }
+    
     const challenge = getDailyChallenge();
     const stats = getTaskStats();
     
     res.json({ 
       success: true, 
       data: { 
-        tasks, 
+        tasks: displayTasks, 
         dailyChallenge: challenge,
-        stats: stats.todayStats
+        stats: stats.todayStats,
+        summary: {
+          total: displayTasks.length,
+          completed: completedTasks.length,
+          pending: displayTasks.length - completedTasks.length
+        }
       } 
     });
   } catch (error) {
@@ -197,6 +220,8 @@ router.get('/tasks/today', (req, res) => {
   }
 });
 
+/**
+ * 获取任务详情
 /**
  * 获取任务详情
  */
@@ -280,6 +305,53 @@ router.get('/tasks/stats/overview', (req, res) => {
     const stats = getTaskStats();
     res.json({ success: true, data: stats });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 获取所有已完成的任务
+ */
+router.get('/tasks/completed', (req, res) => {
+  try {
+    const { limit = 50, offset = 0, taskType = 'all', attrType = 'all' } = req.query;
+    const result = getCompletedTasks({
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      taskType,
+      attrType
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('获取已完成任务失败:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 获取任务的练习历史记录
+ */
+router.get('/tasks/:id/history', (req, res) => {
+  try {
+    const { id } = req.params;
+    const history = getTaskPracticeHistory(parseInt(id));
+    res.json({ success: true, data: history });
+  } catch (error) {
+    console.error('获取任务历史失败:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * 再次练习已完成的任务
+ */
+router.post('/tasks/:id/practice', (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = restartCompletedTask(parseInt(id));
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('开始再次练习失败:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

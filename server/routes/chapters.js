@@ -133,8 +133,23 @@ router.post('/upload-novel', upload.single('file'), async (req, res) => {
     // 删除临时文件
     fs.unlinkSync(filePath);
     
-    // 提取前5000字用于AI分析
-    const sampleText = content.substring(0, 5000);
+    // 提取样本文本用于AI分析：前5000字 + 中间5000字（增强对不同章节标题格式的兼容）
+    const SAMPLE_LEN = 5000;
+    const headSample = String(content || '').slice(0, SAMPLE_LEN);
+
+    let middleSample = '';
+    if (content && content.length > SAMPLE_LEN * 2) {
+      const half = Math.floor(content.length / 2);
+      const start = Math.min(
+        Math.max(0, half - Math.floor(SAMPLE_LEN / 2)),
+        Math.max(0, content.length - SAMPLE_LEN)
+      );
+      middleSample = content.slice(start, start + SAMPLE_LEN);
+    }
+
+    const sampleText = middleSample
+      ? `【样本A：开头节选(前${SAMPLE_LEN}字)】\n${headSample}\n\n【样本B：中段节选(中间${SAMPLE_LEN}字)】\n${middleSample}`
+      : headSample;
     
     res.json({
       success: true,
@@ -211,6 +226,28 @@ router.post('/split-chapters-preview', (req, res) => {
     
     // 查找所有章节标题匹配
     const matches = [...content.matchAll(regex)];
+    // 如果 regex_pattern 中包含限定位数的数字（如 \d{1,2}）且匹配数量看起来受限，尝试生成更宽松的备用正则并返回建议
+    let suggestion = null;
+    try {
+      const patternStr = String(regex_pattern || '');
+      const generalizedPattern = patternStr.replace(/\\d\{\d+(?:,\d+)?\}/g, '\\d+');
+      if (generalizedPattern !== patternStr) {
+        try {
+          const genRegex = new RegExp(generalizedPattern, 'gm');
+          const genMatches = [...content.matchAll(genRegex)];
+          if (genMatches.length > matches.length) {
+            suggestion = {
+              suggested_regex: generalizedPattern,
+              suggested_count: genMatches.length
+            };
+          }
+        } catch (e) {
+          // 忽略备用正则无效情况
+        }
+      }
+    } catch (e) {
+      // 忽略任何处理错误
+    }
     
     if (matches.length === 0) {
       return res.status(400).json({
@@ -246,7 +283,8 @@ router.post('/split-chapters-preview', (req, res) => {
       data: {
         chapters,
         total: chapters.length,
-        total_words: chapters.reduce((sum, ch) => sum + ch.word_count, 0)
+        total_words: chapters.reduce((sum, ch) => sum + ch.word_count, 0),
+        suggestion
       }
     });
   } catch (error) {
