@@ -1,0 +1,4 @@
+dcb8d393cfac1563d4ab28637ea771db6d3364cc7227468d18a824a6f911f7ea  AI-Novel-Trainer-1.0.6-alpha-mac-arm64.dmg
+43e3f5f28588bb36d3a2891c95455dcadcf7c022c3cfaffef7a5ca660f41e327  AI-Novel-Trainer-1.0.6-alpha-mac-arm64.zip
+537c1630c885c724d9e92fad6345a326a877802b94c47025dc4d7f06a82f067c  AI-Novel-Trainer-1.0.6-alpha-mac-x64.dmg
+230ffb92fe3c687638d1647c3a9b27f5a3baf47cfe3fae476a8c4d9773ad05fc  AI-Novel-Trainer-1.0.6-alpha-mac-x64.zip

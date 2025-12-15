@@ -1,4 +1,4 @@
-## [v1.0.6-alpha] - 2025-12-12
+## [v1.0.6-alpha] - 2025-12-15
 
 ### 🎯 墨境优化
 - 等级经验曲线优化：按“写作量”重新缩放等级阈值，估算 Lv6≈100万字、Lv10≈5000万字（基于 0.05 XP/字）
@@ -33,3 +33,25 @@
 - **macOS (Apple Silicon)**: `AI-Novel-Trainer-1.0.5-alpha-mac-arm64.dmg`
 - **macOS (Intel)**: `AI-Novel-Trainer-1.0.5-alpha-mac-x64.dmg`
 - **Windows 安装程序**: `AI-Novel-Trainer-1.0.5-alpha-win-x64.exe`
+
+## 下载（v1.0.6-alpha）
+
+- **macOS (Apple Silicon)**: `AI-Novel-Trainer-1.0.6-alpha-mac-arm64.dmg`
+- **macOS (Intel)**: `AI-Novel-Trainer-1.0.6-alpha-mac-x64.dmg`
+- **Windows 安装程序**: `AI-Novel-Trainer-1.0.6-alpha-win-x64.exe`
+
+**开发者变更（供发布审阅）**
+
+- `client/package.json`：版本号更新为 `1.0.6-alpha`。
+- `client/src/api/mojing.js`：新增客户端 API：`getCompletedTasks`、`getTaskPracticeHistory`、`practiceTask`，用于已完成任务和练习历史的查询与再次练习。
+- `client/src/views/MoJing/Tasks.vue`：任务界面重构，新增“今日/已完成”视图切换、已完成任务列表与筛选、练习历史对话框与“再次练习”动作，以及若干 UI 文案/状态调整。
+- `client/src/views/Chapters/Index.vue`：章节拆分增强：支持后端返回的备用正则（fallback regex）提示与一键应用逻辑，提高对不同章节编号格式的兼容性。
+- `server/app.js`：增加 `express.json` 的 body size 限制至 `100mb`（提高大文本上传兼容性）。
+- `server/routes/chapters.js`：改进样本提取策略（头部 + 中段抽样），并在拆分预览中尝试生成并返回更宽松的备用正则建议。
+- `server/routes/mojing.js`：新增路由：`/tasks/completed`、`/tasks/:id/history`、`/tasks/:id/practice`；同时 `tasks/today` 返回合并已完成/待完成任务和 summary 信息以便前端按视图展示。
+- `server/services/aiService.js`：新增 `stripThinkTags`，用于清洗 AI 返回中不必要的 <think> 标签。
+- `server/services/inkTaskService.js`：增强 AI 评审错误容错（AI 异常时生成默认反馈并持久化到 `ai_feedback` 字段），并新增服务方法：`getCompletedTasks`、`getTaskPracticeHistory`、`restartCompletedTask`。
+- `desktop/package.json`、`server/package.json`、`package.json`：同步版本号至 `1.0.6-alpha`。
+- 产物：已在 `desktop/dist` 生成 mac x64/arm64 的 dmg/zip，同时在 `RELEASES/checksums-1.0.6-alpha.txt` 中记录了 SHA256 校验和。
+
+注：以上变更已在工作目录修改但尚未提交为 release commit；我可以按需提交、打 tag 并创建 GitHub Draft Release（需要你的确认是否自动发布）。
